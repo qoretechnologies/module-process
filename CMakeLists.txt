@@ -84,6 +84,8 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "Drago
 else()
     target_link_libraries(${module_name} PRIVATE Boost::process)
 endif()
+# dlsym() for Process::releaseFreeMemory()
+target_link_libraries(${module_name} PRIVATE ${CMAKE_DL_LIBS})
 
 qore_dist("${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 

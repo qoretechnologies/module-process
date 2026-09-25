@@ -1527,6 +1527,34 @@ static hash<SystemMemoryInfo> Process::getSystemMemoryInfo() [flags=RET_VALUE_ON
     return ProcessPriv::getSystemMemoryInfo(xsink);
 }
 
+//! Returns memory that has been freed by the current process to the operating system, if supported
+/** The memory allocator of a process keeps memory that has been freed for later use, so after an operation that
+    temporarily needs a large amount of memory, the memory used by the process stays near its peak.  This method asks
+    the allocator of the current process to return the free memory that it holds to the operating system.
+
+    @par Example:
+    @code{.py}
+# return the memory used to build the cache to the operating system
+buildCache();
+Process::releaseFreeMemory();
+    @endcode
+
+    @return @ref Qore::True "True" if the allocator of the current process supports returning free memory to the
+    operating system and was asked to do so, @ref Qore::False "False" if not
+
+    @note
+    - Supported with the jemalloc allocator on any platform (including the one linked into %Qore on musl-based
+      Linux systems and the FreeBSD system allocator), with the GNU C library allocator on Linux, and with the
+      system allocator on macOS
+    - This method can take some time with a large heap, since the allocator has to scan its free memory; call it
+      after an operation that has freed a large amount of memory, not frequently
+
+    @since process 2.1
+*/
+static bool Process::releaseFreeMemory() [dom=PROCESS] {
+    return ProcessPriv::releaseFreeMemory();
+}
+
 //! Returns a list of PIDs that have a listening TCP socket on the given port
 /** @par Example:
     @code{.py}

@@ -125,6 +125,7 @@ public class Main inherits QUnit::Test {
         addTestCase("sandbox test", \sandboxTest());
         addTestCase("getExecutablePath test", \getExecutablePathTest());
         addTestCase("getSystemMemoryInfo test", \getSystemMemoryInfoTest());
+        addTestCase("releaseFreeMemory test", \releaseFreeMemoryTest());
         addTestCase("getPidsForPort test", \getPidsForPortTest());
         addTestCase("getPidsForUnixSocket test", \getPidsForUnixSocketTest());
 
@@ -1602,6 +1603,35 @@ auto sub descriptors() { return Process::getDescriptorCount(getpid()); }
             assertGt(0, info.limit);
             assertTrue(info.available <= info.limit, "no more memory is available than the limit");
         }
+    }
+
+    releaseFreeMemoryTest() {
+        bool supported = Process::releaseFreeMemory();
+        if (PlatformOS == "Linux" || PlatformOS == "Darwin" || PlatformOS == "FreeBSD") {
+            assertTrue(supported, "supported on " + PlatformOS);
+        }
+        if (!supported || !HAVE_PROCESS_GETMEMORYINFO) {
+            return;
+        }
+        int before = Process::getMemorySummaryInfo().priv;
+        {
+            # many small allocations, which the allocator keeps after they are freed
+            list<string> l = ();
+            for (int i = 0; i < 1000000; ++i) {
+                l += sprintf("value %d", i);
+            }
+            assertEq(1000000, l.size());
+        }
+        int peak = Process::getMemorySummaryInfo().priv;
+        assertTrue(Process::releaseFreeMemory());
+        int after = Process::getMemorySummaryInfo().priv;
+        # the list took tens of megabytes; most of it must be returned
+        assertGt(after, before + (peak - before) / 2, sprintf("before: %d peak: %d after: %d", before, peak, after));
+
+        # the method is in the process domain
+        Program p(PO_NEW_STYLE | PO_NO_PROCESS_CONTROL);
+        assertThrows("PARSE-EXCEPTION", \p.parse(), ("%requires process\nProcess::releaseFreeMemory();",
+            "release-free-memory-test"));
     }
 
     getCommandLineTest() {

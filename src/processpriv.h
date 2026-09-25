@@ -155,6 +155,9 @@ public:
     //! Get system memory information (static)
     DLLLOCAL static QoreHashNode* getSystemMemoryInfo(ExceptionSink* xsink);
 
+    //! Returns free memory held by the allocator of the current process to the operating system (static)
+    DLLLOCAL static bool releaseFreeMemory();
+
     //! Get PIDs listening on a TCP port (static)
     DLLLOCAL static QoreListNode* getPidsForPort(int port, ExceptionSink* xsink);
 

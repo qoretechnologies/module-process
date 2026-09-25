@@ -3559,6 +3559,35 @@ QoreStringNode* ProcessPriv::getExecutablePath(int pid, ExceptionSink* xsink) {
     return new QoreStringNode(exe.string());
 }
 
+#include <dlfcn.h>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#elif defined(__APPLE__) && defined(__MACH__)
+#include <malloc/malloc.h>
+#endif
+
+bool ProcessPriv::releaseFreeMemory() {
+#ifndef _WIN32
+    // jemalloc exports mallctl() when it is the allocator of the process: when it is linked into libqore on musl,
+    // preloaded, or the system allocator (FreeBSD); it is looked up at runtime, since it is not known at build time
+    typedef int (*mallctl_t)(const char* name, void* oldp, size_t* oldlenp, void* newp, size_t newlen);
+    static mallctl_t mallctl_func = reinterpret_cast<mallctl_t>(dlsym(RTLD_DEFAULT, "mallctl"));
+    if (mallctl_func) {
+        // 4096 is MALLCTL_ARENAS_ALL: purge the unused pages of every arena
+        return !mallctl_func("arena.4096.purge", nullptr, nullptr, nullptr, 0);
+    }
+#endif
+#if defined(__GLIBC__)
+    malloc_trim(0);
+    return true;
+#elif defined(__APPLE__) && defined(__MACH__)
+    malloc_zone_pressure_relief(nullptr, 0);
+    return true;
+#else
+    return false;
+#endif
+}
+
 QoreHashNode* ProcessPriv::getSystemMemoryInfo(ExceptionSink* xsink) {
 #if defined(__linux__)
     return getSystemMemoryInfoLinux(xsink);

@@ -118,6 +118,9 @@ Version 1.0. (See http://www.boost.org/LICENSE_1_0.txt)
     - added @ref Qore::Process::Process::getSystemMemoryInfo() "Process::getSystemMemoryInfo()" to get the
       physical and available memory of the system, including any memory limit of the current process's
       control group on Linux or its jetsam memory limit on macOS; supported on Linux and macOS
+    - added @ref Qore::Process::Process::releaseFreeMemory() "Process::releaseFreeMemory()" to return memory
+      that has been freed by the current process to the operating system; supported with jemalloc, the GNU C
+      library allocator, and the macOS system allocator
     - added @ref Qore::Process::Process::getExecutablePath() "Process::getExecutablePath()" to get the path to
       the executable of a process using Boost ext::exe; supported on the same platforms as
       @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()"
