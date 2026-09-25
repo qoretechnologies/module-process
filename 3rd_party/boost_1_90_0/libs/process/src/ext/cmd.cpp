@@ -237,6 +237,12 @@ shell cmd(boost::process::v2::pid_type pid, error_code & ec)
     std::string procargs;
     procargs.resize(4096);
     int f = ::open(("/proc/" + std::to_string(pid) + "/cmdline").c_str(), O_RDONLY);
+    // Qore patch: report a failure to open the file instead of reading from an invalid descriptor
+    if (f < 0)
+    {
+        BOOST_PROCESS_V2_ASSIGN_LAST_ERROR(ec);
+        return {};
+    }
 
     while (procargs.back() != EOF)
     {
@@ -255,6 +261,12 @@ shell cmd(boost::process::v2::pid_type pid, error_code & ec)
         procargs.resize(procargs.size() + 4096);
     }
     ::close(f);
+
+    // Qore patch: the command line is empty for kernel threads, zombies, and transiently while a
+    // process is executing a new program; return an empty shell instead of calling back() on an
+    // empty string and building argv from an empty buffer (undefined behavior)
+    if (procargs.empty())
+        return {};
 
     if (procargs.back() == EOF)
         procargs.pop_back();

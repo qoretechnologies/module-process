@@ -1634,6 +1634,15 @@ auto sub descriptors() { return Process::getDescriptorCount(getpid()); }
 
             # Negative: nonexistent PID
             assertThrows("PROCESS-GETCOMMANDLINE-ERROR", \Process::getCommandLine(), 999999999);
+
+            # Negative: a kernel thread has an empty /proc/PID/cmdline, which must raise an exception
+            # and not crash; only when PID 2 is kthreadd (not in a PID namespace) and not running as
+            # root, when the process cannot be signaled and the retry loop ends immediately
+            if (Qore::PlatformOS == "Linux" && getuid() && is_file("/proc/2/comm")
+                && ReadOnlyFile::readTextFile("/proc/2/comm") == "kthreadd\n") {
+                assertEq("", ReadOnlyFile::readTextFile("/proc/2/cmdline"));
+                assertThrows("PROCESS-GETCOMMANDLINE-ERROR", \Process::getCommandLine(), 2);
+            }
         } else {
             assertThrows("PROCESS-GETCOMMANDLINE-UNSUPPORTED-ERROR", \Process::getCommandLine(), 1);
         }

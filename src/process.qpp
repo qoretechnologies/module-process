@@ -146,6 +146,9 @@ Version 1.0. (See http://www.boost.org/LICENSE_1_0.txt)
       and the system through \c /proc requires read access; processes that a sandbox hides are skipped when
       processes are scanned, and long scans can be cancelled
     - fixed leaking the output files given for a process that is not started because the call was cancelled
+    - fixed undefined behavior and a crash on Linux in
+      @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" when the command line of the
+      process is empty, as for kernel threads and for a process while it is executing a new program
     - fixed heap corruption and crashes after a process that had already exited was waited for, most often after
       @ref Qore::Process::Process::run() "Process::run()" terminated a process that did not finish in time: waiting
       returned before the background I/O had finished, and destroying the process object then freed data still used
