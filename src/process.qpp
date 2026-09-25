@@ -115,6 +115,12 @@ Version 1.0. (See http://www.boost.org/LICENSE_1_0.txt)
     - added @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" to get the full command
       line of a process by PID using Boost ext::cmd; supported on Linux, macOS, FreeBSD, DragonFly, NetBSD,
       and OpenBSD
+    - added @ref Qore::Process::Process::getSystemMemoryInfo() "Process::getSystemMemoryInfo()" to get the
+      physical and available memory of the system, including any memory limit of the current process's
+      control group on Linux; supported on Linux and macOS
+    - added @ref Qore::Process::Process::getExecutablePath() "Process::getExecutablePath()" to get the path to
+      the executable of a process using Boost ext::exe; supported on the same platforms as
+      @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()"
     - added @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" to find PIDs listening
       on a TCP port; uses \c /proc/net/tcp on Linux, native \c libproc APIs on macOS, and \c sysctl
       \c KERN_PROC_FILEDESC on FreeBSD and DragonFly BSD; only matches TCP sockets in LISTEN state
@@ -135,6 +141,15 @@ Version 1.0. (See http://www.boost.org/LICENSE_1_0.txt)
     - added \c limits option to set resource limits (memory, CPU time, file descriptors, etc.)
 
     <b>Bug Fixes:</b>
+    - the filesystem restrictions of a sandbox are enforced: a program is only started if it may be executed and its
+      working directory read, searching the path only returns programs that may be read, and inspecting processes
+      and the system through \c /proc requires read access; processes that a sandbox hides are skipped when
+      processes are scanned, and long scans can be cancelled
+    - fixed leaking the output files given for a process that is not started because the call was cancelled
+    - fixed heap corruption and crashes after a process that had already exited was waited for, most often after
+      @ref Qore::Process::Process::run() "Process::run()" terminated a process that did not finish in time: waiting
+      returned before the background I/O had finished, and destroying the process object then freed data still used
+      by the background I/O thread; output of a process that exits before it is waited for is also complete now
     - <b>CRITICAL:</b> fixed potential kill(-1, SIGKILL) bug that could kill all user processes when
       terminate() or sendSignal() was called on an invalid/moved-from process object
       (boost::process v1 returns -1 for invalid PIDs, and kill(-1, sig) kills all processes)
@@ -231,17 +246,20 @@ static QoreNamespace ProcessNS("Qore::Process");
 DLLLOCAL const TypedHashDecl* hashdeclMemorySummaryInfo;
 DLLLOCAL const TypedHashDecl* hashdeclProcessResult;
 DLLLOCAL const TypedHashDecl* hashdeclResourceUsageInfo;
+DLLLOCAL const TypedHashDecl* hashdeclSystemMemoryInfo;
 
 DLLLOCAL QoreClass* initProcessClass(QoreNamespace& ns);
 
 DLLLOCAL TypedHashDecl* init_hashdecl_MemorySummaryInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_ProcessResult(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_ResourceUsageInfo(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_SystemMemoryInfo(QoreNamespace& ns);
 
 static void process_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     hashdeclMemorySummaryInfo = init_hashdecl_MemorySummaryInfo(ProcessNS);
     hashdeclProcessResult = init_hashdecl_ProcessResult(ProcessNS);
     hashdeclResourceUsageInfo = init_hashdecl_ResourceUsageInfo(ProcessNS);
+    hashdeclSystemMemoryInfo = init_hashdecl_SystemMemoryInfo(ProcessNS);
 
     ProcessNS.addSystemClass(initProcessClass(ProcessNS));
 }

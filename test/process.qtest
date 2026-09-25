@@ -121,6 +121,10 @@ public class Main inherits QUnit::Test {
         addTestCase("Pipeline test", \pipelineTest());
         addTestCase("Resource limits test", \resourceLimitsTest());
         addTestCase("getCommandLine test", \getCommandLineTest());
+        addTestCase("repeated run() test", \repeatedRunTest());
+        addTestCase("sandbox test", \sandboxTest());
+        addTestCase("getExecutablePath test", \getExecutablePathTest());
+        addTestCase("getSystemMemoryInfo test", \getSystemMemoryInfoTest());
         addTestCase("getPidsForPort test", \getPidsForPortTest());
         addTestCase("getPidsForUnixSocket test", \getPidsForUnixSocketTest());
 
@@ -1527,6 +1531,76 @@ public class Main inherits QUnit::Test {
             }});
             p.wait();
             assertEq(0, p.exitCode(), "process with multiple limits should succeed");
+        }
+    }
+
+    # run() terminates a child that does not finish in time; the background I/O thread must have finished before
+    # the process object is destroyed, otherwise the heap is corrupted (this crashed about every other run of 40
+    # iterations), and output of a child that exits before wait() is called must be complete
+    repeatedRunTest() {
+        for (int i = 0; i < 40; ++i) {
+            hash<auto> result = Process::run(getTestValue("testSleep"), (5,), {"path": (m_prefix,)}, 50ms);
+            assertFalse(result.ok, sprintf("run %d times out", i));
+        }
+        for (int i = 0; i < 40; ++i) {
+            hash<auto> result = Process::run("echo", ("line", i));
+            assertEq(sprintf("line %d\n", i), result.stdout, sprintf("complete output of run %d", i));
+        }
+    }
+
+    # a sandboxed program cannot start programs, search for them, or inspect processes and the system outside its
+    # sandbox root
+    sandboxTest() {
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot(tmp_location());
+        Program p(PO_NO_CHILD_PO_RESTRICTIONS);
+        p.setSandboxManager(sm);
+        p.parse("%modern
+%requires process
+auto sub start() { return new Process(\"/bin/true\"); }
+auto sub search() { return Process::searchPath(\"ls\"); }
+auto sub memory() { return Process::getSystemMemoryInfo(); }
+auto sub exe() { return Process::getExecutablePath(); }
+auto sub cmdline() { return Process::getCommandLine(getpid()); }
+auto sub descriptors() { return Process::getDescriptorCount(getpid()); }
+", "sandbox-test");
+
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("start",), "a program outside the root");
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("search",), "a program outside the root");
+        if (PlatformOS == "Linux") {
+            # these read /proc on Linux
+            assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("memory",), "/proc/meminfo");
+            assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("exe",), "/proc/PID/exe");
+            assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("cmdline",), "/proc/PID/cmdline");
+            assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("descriptors",), "/proc/PID/fd");
+        }
+    }
+
+    getExecutablePathTest() {
+        if (!HAVE_PROCESS_GETEXECUTABLEPATH) {
+            assertThrows("PROCESS-GETEXECUTABLEPATH-UNSUPPORTED-ERROR", \Process::getExecutablePath());
+            return;
+        }
+        # this script runs in the Qore interpreter
+        string exe = Process::getExecutablePath();
+        assertEq(exe, Process::getExecutablePath(getpid()));
+        assertTrue(absolute_path(exe), sprintf("the path is absolute (got %y)", exe));
+        assertTrue(is_executable(exe), sprintf("the path is an executable file (got %y)", exe));
+        assertThrows("PROCESS-GETEXECUTABLEPATH-ERROR", \Process::getExecutablePath(), -1);
+    }
+
+    getSystemMemoryInfoTest() {
+        if (!HAVE_PROCESS_GETSYSTEMMEMORYINFO) {
+            assertThrows("PROCESS-GETSYSTEMMEMORYINFO-UNSUPPORTED-ERROR", \Process::getSystemMemoryInfo());
+            return;
+        }
+        hash<SystemMemoryInfo> info = Process::getSystemMemoryInfo();
+        assertGt(0, info.total, "the system has memory");
+        assertGt(0, info.available, "memory is available to this process");
+        assertTrue(info.available <= info.total, "no more memory is available than the system has");
+        if (exists info.limit) {
+            assertGt(0, info.limit);
+            assertTrue(info.available <= info.limit, "no more memory is available than the limit");
         }
     }
 

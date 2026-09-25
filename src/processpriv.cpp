@@ -37,11 +37,45 @@
 // boost
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/process/v2/ext/cmd.hpp>
+#include <boost/process/v2/ext/exe.hpp>
 
 // module
 #include "unix-config.h"
 
 DLLLOCAL extern const TypedHashDecl* hashdeclMemorySummaryInfo;
+DLLLOCAL extern const TypedHashDecl* hashdeclSystemMemoryInfo;
+
+//! Checks that an active sandbox allows the given access to a file or directory
+/** @param path the path
+    @param mode the access mode (ex: \c QSEC_READ)
+    @param xsink if access is denied, a \c FILESYSTEM-ACCESS-DENIED exception is raised here
+
+    @return 0 if access is allowed, -1 if it is denied
+*/
+static int check_sandbox_access(const char* path, int mode, ExceptionSink* xsink) {
+    QoreSandboxManagerHelper smh(QoreSandboxManagerHelper::Policy);
+    if (smh && !smh->checkFilesystemAccess(path, mode, xsink)) {
+        return -1;
+    }
+    return 0;
+}
+
+//! Checks that an active sandbox allows the given file or directory to be read
+static int check_sandbox_read(const char* path, ExceptionSink* xsink) {
+    return check_sandbox_access(path, QSEC_READ, xsink);
+}
+
+//! Returns true if an active sandbox allows the given file or directory to be read; raises no exception
+/** Used when scanning /proc, where a sandbox can hide entries without failing the scan
+*/
+static bool sandbox_allows_read(const char* path) {
+    ExceptionSink xsink;
+    if (check_sandbox_read(path, &xsink)) {
+        xsink.clear();
+        return false;
+    }
+    return true;
+}
 
 static int page_size = sysconf(_SC_PAGESIZE);
 
@@ -433,8 +467,17 @@ ProcessPriv::ProcessPriv(const char* command, const QoreListNode* arguments, con
         processArgs(arguments, exeArgs);
     }
 
-    // check for interrupt before spawning process
-    if (qore_check_cancel(xsink, "Process::constructor")) {
+    // the program must be executable and the working directory readable in any sandbox, and the process is not
+    // started if the call is cancelled; the output files are closed in all of these cases
+    if (check_sandbox_access(effectivePath.string().c_str(), QSEC_EXECUTE, xsink)
+            || (opts && opts->existsKey("cwd") && check_sandbox_read(cwd.c_str(), xsink))
+            || qore_check_cancel(xsink, "Process::constructor")) {
+        if (stdoutFile) {
+            fclose(stdoutFile);
+        }
+        if (stderrFile) {
+            fclose(stderrFile);
+        }
         return;
     }
 
@@ -471,6 +514,14 @@ ProcessPriv::ProcessPriv(const char* command, const QoreListNode* arguments, con
 }
 
 ProcessPriv::~ProcessPriv() {
+    // The background I/O thread runs handlers that use the pipes, buffers, and closures of this object and the child
+    // process object.  Members are destroyed in reverse order of declaration, which destroys all of them before the
+    // future that joins the thread, so the thread must be stopped and joined here, before anything it uses is
+    // destroyed.
+    if (m_asio_ctx_run_future.valid()) {
+        m_asio_ctx.stop();
+        m_asio_ctx_run_future.wait();
+    }
     // in case the object is obliterated (exception in constructor), the destructor is not run
     delete m_process;
     assert(!bg_xsink);
@@ -724,7 +775,12 @@ boost::filesystem::path ProcessPriv::optsPath(const char* command, const QoreHas
         xsink->raiseException("PROCESS-SEARCH-PATH-ERROR", "Command '%s' cannot be found in PATH", command);
     }
     try {
-        return boost::filesystem::absolute(ret);
+        ret = boost::filesystem::absolute(ret);
+        // searching the path reveals files, so the file found must be readable in any sandbox
+        if (check_sandbox_read(ret.string().c_str(), xsink)) {
+            ret.clear();
+        }
+        return ret;
     } catch (const std::exception& ex) {
         xsink->raiseException("PROCESS-DIRECTORY-ERROR", ex.what());
         return ret;
@@ -1188,10 +1244,17 @@ bool ProcessPriv::wait(ExceptionSink* xsink) {
         return false;
     }
 
-    // return immediately if we already have an exit code
+    // if the child has already exited, only the background I/O needs to finish; without waiting for it, output
+    // could still be incomplete, and the I/O thread could still be running when this object is destroyed
     {
-        std::lock_guard<std::mutex> lock(mtx_process_status);
-        if (exit_code != -1) {
+        bool exited;
+        {
+            std::lock_guard<std::mutex> lock(mtx_process_status);
+            exited = exit_code != -1;
+        }
+        if (exited) {
+            // rethrows any background exceptions
+            finalizeStreams(xsink);
             return true;
         }
     }
@@ -1259,10 +1322,17 @@ bool ProcessPriv::wait(int64 t, ExceptionSink* xsink) {
         return false;
     }
 
-    // return immediately if we already have an exit code
+    // if the child has already exited, only the background I/O needs to finish; without waiting for it, output
+    // could still be incomplete, and the I/O thread could still be running when this object is destroyed
     {
-        std::lock_guard<std::mutex> lock(mtx_process_status);
-        if (exit_code != -1) {
+        bool exited;
+        {
+            std::lock_guard<std::mutex> lock(mtx_process_status);
+            exited = exit_code != -1;
+        }
+        if (exited) {
+            // rethrows any background exceptions
+            finalizeStreams(xsink);
             return true;
         }
     }
@@ -1929,6 +1999,9 @@ QoreHashNode* ProcessPriv::getMemorySummaryInfoSolaris(int pid, ExceptionSink* x
     }
 
     QoreStringMaker prmap_path("/proc/%d/map", pid);
+    if (check_sandbox_read(prmap_path.c_str(), xsink)) {
+        return nullptr;
+    }
     prmap_fd = open(prmap_path.c_str(), O_RDONLY);
     if (prmap_fd == -1) {
         xsink->raiseErrnoException("PROCESS-GETMEMORYINFO-ERROR", errno, "could not open virtual shared memory "
@@ -1996,6 +2069,10 @@ static bool isZombie(int pid) {
     char path[32];
     snprintf(path, sizeof(path), "/proc/%d/stat", pid);
 
+    // a process that a sandbox does not allow to be inspected is not reported as a zombie
+    if (!sandbox_allows_read(path)) {
+        return false;
+    }
     FILE* f = fopen(path, "r");
     if (!f) {
         return false;
@@ -2193,6 +2270,9 @@ int64 ProcessPriv::getDescriptorCount(ExceptionSink* xsink, int pid) {
     // "The number of open files for the process is stored in ‘size’ member of stat() output for /proc/<pid>/fd for
     // fast access"
     QoreStringMaker dir("/proc/%d/fd", pid);
+    if (check_sandbox_read(dir.c_str(), xsink)) {
+        return -1;
+    }
     struct stat statbuf;
     int rc = stat(dir.c_str(), &statbuf);
     if (rc < 0) {
@@ -2455,6 +2535,9 @@ QoreListNode* ProcessPriv::getChildPids(int pid, ExceptionSink* xsink) {
         }
     } else {
         // Fallback: scan all /proc/*/stat files
+        if (check_sandbox_read("/proc", xsink)) {
+            return nullptr;
+        }
         DIR* procdir = opendir("/proc");
         if (!procdir) {
             xsink->raiseErrnoException("PROCESS-GETCHILDPIDS-ERROR", errno, "cannot open /proc");
@@ -2462,7 +2545,13 @@ QoreListNode* ProcessPriv::getChildPids(int pid, ExceptionSink* xsink) {
         }
 
         struct dirent* entry;
+        unsigned count = 0;
         while ((entry = readdir(procdir)) != nullptr) {
+            // there is one entry for each process in the system
+            if (!(++count % 100) && qore_check_cancel(xsink, "Process::getChildPids")) {
+                closedir(procdir);
+                return nullptr;
+            }
             // Check if entry is a number (PID)
             char* endptr;
             long entryPid = strtol(entry->d_name, &endptr, 10);
@@ -2580,6 +2669,15 @@ QoreStringNode* ProcessPriv::getCommandLine(int pid, ExceptionSink* xsink) {
     auto start = std::chrono::steady_clock::now();
     int attempt = 0;
 
+#ifdef __linux__
+    // Boost reads /proc/PID/cmdline on Linux
+    {
+        QoreStringMaker path("/proc/%d/cmdline", pid);
+        if (check_sandbox_read(path.c_str(), xsink)) {
+            return nullptr;
+        }
+    }
+#endif
     while (true) {
         boost::system::error_code ec;
         auto sh = boost::process::v2::ext::cmd(pid, ec);
@@ -2761,11 +2859,15 @@ QoreListNode* ProcessPriv::getPidsForPort(int port, ExceptionSink* xsink) {
     }
 
     // Scan /proc/<pid>/fd to find PIDs with matching socket inodes
+    if (check_sandbox_read("/proc", xsink)) {
+        return nullptr;
+    }
     DIR* procdir = opendir("/proc");
     if (!procdir) {
         xsink->raiseErrnoException("PROCESS-GETPIDSFORPORT-ERROR", errno, "cannot open /proc");
         return nullptr;
     }
+    unsigned count = 0;
 
     std::unordered_map<int, bool> found_pids;
     struct dirent* entry;
@@ -2777,7 +2879,17 @@ QoreListNode* ProcessPriv::getPidsForPort(int port, ExceptionSink* xsink) {
             continue;
         }
 
+        // there is one entry for each process in the system
+        if (!(++count % 100) && qore_check_cancel(xsink, "Process::getPidsForPort")) {
+            closedir(procdir);
+            return nullptr;
+        }
+
         QoreStringMaker fd_path("/proc/%ld/fd", pid_val);
+        // a sandbox can hide the descriptors of a process without failing the scan
+        if (!sandbox_allows_read(fd_path.c_str())) {
+            continue;
+        }
         DIR* fddir = opendir(fd_path.c_str());
         if (!fddir) {
             continue;
@@ -2786,6 +2898,12 @@ QoreListNode* ProcessPriv::getPidsForPort(int port, ExceptionSink* xsink) {
         struct dirent* fd_entry;
         bool found = false;
         while ((fd_entry = readdir(fddir)) != nullptr) {
+            // a process can have many descriptors
+            if (!(++count % 100) && qore_check_cancel(xsink, "Process::getPidsForPort")) {
+                closedir(fddir);
+                closedir(procdir);
+                return nullptr;
+            }
             QoreStringMaker link_path("%s/%s", fd_path.c_str(), fd_entry->d_name);
             char target[256];
             ssize_t len = readlink(link_path.c_str(), target, sizeof(target) - 1);
@@ -3108,11 +3226,15 @@ QoreListNode* ProcessPriv::getPidsForUnixSocket(const char* path, ExceptionSink*
     }
 
     // Scan /proc/<pid>/fd to find PIDs with matching socket inodes
+    if (check_sandbox_read("/proc", xsink)) {
+        return nullptr;
+    }
     DIR* procdir = opendir("/proc");
     if (!procdir) {
         xsink->raiseErrnoException("PROCESS-GETPIDSFORUNIXSOCKET-ERROR", errno, "cannot open /proc");
         return nullptr;
     }
+    unsigned count = 0;
 
     std::unordered_map<int, bool> found_pids;
     struct dirent* entry;
@@ -3123,7 +3245,17 @@ QoreListNode* ProcessPriv::getPidsForUnixSocket(const char* path, ExceptionSink*
             continue;
         }
 
+        // there is one entry for each process in the system
+        if (!(++count % 100) && qore_check_cancel(xsink, "Process::getPidsForUnixSocket")) {
+            closedir(procdir);
+            return nullptr;
+        }
+
         QoreStringMaker fd_path("/proc/%ld/fd", pid_val);
+        // a sandbox can hide the descriptors of a process without failing the scan
+        if (!sandbox_allows_read(fd_path.c_str())) {
+            continue;
+        }
         DIR* fddir = opendir(fd_path.c_str());
         if (!fddir) {
             continue;
@@ -3132,6 +3264,12 @@ QoreListNode* ProcessPriv::getPidsForUnixSocket(const char* path, ExceptionSink*
         struct dirent* fd_entry;
         bool found = false;
         while ((fd_entry = readdir(fddir)) != nullptr) {
+            // a process can have many descriptors
+            if (!(++count % 100) && qore_check_cancel(xsink, "Process::getPidsForUnixSocket")) {
+                closedir(fddir);
+                closedir(procdir);
+                return nullptr;
+            }
             QoreStringMaker link_path("%s/%s", fd_path.c_str(), fd_entry->d_name);
             char target[256];
             ssize_t len = readlink(link_path.c_str(), target, sizeof(target) - 1);
@@ -3393,3 +3531,211 @@ QoreHashNode* ProcessPriv::run(const char* command, const QoreListNode* argument
 
     return rv.release();
 }
+
+QoreStringNode* ProcessPriv::getExecutablePath(int pid, ExceptionSink* xsink) {
+#ifdef __linux__
+    // Boost reads the /proc/PID/exe link on Linux
+    {
+        QoreStringMaker link("/proc/%d/exe", pid);
+        if (check_sandbox_read(link.c_str(), xsink)) {
+            return nullptr;
+        }
+    }
+#endif
+    // Boost reports ENOTSUP on platforms where ext::exe is not implemented
+    boost::system::error_code ec;
+    auto exe = boost::process::v2::ext::exe(pid, ec);
+    if (ec) {
+        if (ec.value() == ENOTSUP) {
+            xsink->raiseException("PROCESS-GETEXECUTABLEPATH-UNSUPPORTED-ERROR",
+                "getExecutablePath() is not supported on this platform");
+        } else {
+            xsink->raiseException("PROCESS-GETEXECUTABLEPATH-ERROR", "cannot get the executable path for PID %d: %s",
+                pid, ec.message().c_str());
+        }
+        return nullptr;
+    }
+    return new QoreStringNode(exe.string());
+}
+
+QoreHashNode* ProcessPriv::getSystemMemoryInfo(ExceptionSink* xsink) {
+#if defined(__linux__)
+    return getSystemMemoryInfoLinux(xsink);
+#elif defined(__APPLE__) && defined(__MACH__)
+    return getSystemMemoryInfoDarwin(xsink);
+#else
+    // an implementation is required for each platform
+    xsink->raiseException("PROCESS-GETSYSTEMMEMORYINFO-UNSUPPORTED-ERROR",
+        "getSystemMemoryInfo() is not supported on this platform");
+    return nullptr;
+#endif
+}
+
+#if defined(__linux__)
+#include <fstream>
+#include <sstream>
+#include <string>
+
+//! Reads a numeric byte value from a cgroup file
+/** @return the value, or -1 if there is none (ex: "max" or no file) or if a sandbox denies access (an exception
+    is raised)
+*/
+static int64 read_cgroup_bytes(const std::string& path, ExceptionSink* xsink) {
+    if (check_sandbox_read(path.c_str(), xsink)) {
+        return -1;
+    }
+    std::ifstream f(path);
+    std::string line;
+    if (!f || !std::getline(f, line) || line.empty() || !isdigit(line[0])) {
+        return -1;
+    }
+    return strtoll(line.c_str(), nullptr, 10);
+}
+
+//! Updates the limit and remaining memory with the memory controller of the given cgroup directory
+/** @return 0 for success, -1 if a sandbox denies access (an exception is raised)
+*/
+static int check_cgroup(const std::string& dir, const char* limit_file, const char* usage_file, int64& limit,
+        int64& remaining, ExceptionSink* xsink) {
+    int64 l = read_cgroup_bytes(dir + limit_file, xsink);
+    if (*xsink) {
+        return -1;
+    }
+    // cgroup v1 reports no limit as a value close to the maximum 64-bit value
+    if (l <= 0 || l >= (1LL << 60)) {
+        return 0;
+    }
+    if (limit == -1 || l < limit) {
+        limit = l;
+    }
+    int64 usage = read_cgroup_bytes(dir + usage_file, xsink);
+    if (*xsink) {
+        return -1;
+    }
+    int64 r = (usage >= 0 && usage < l) ? l - usage : 0;
+    if (remaining == -1 || r < remaining) {
+        remaining = r;
+    }
+    return 0;
+}
+
+QoreHashNode* ProcessPriv::getSystemMemoryInfoLinux(ExceptionSink* xsink) {
+    if (check_sandbox_read("/proc/meminfo", xsink) || check_sandbox_read("/proc/self/cgroup", xsink)) {
+        return nullptr;
+    }
+    std::ifstream meminfo("/proc/meminfo");
+    if (!meminfo) {
+        xsink->raiseErrnoException("PROCESS-GETSYSTEMMEMORYINFO-ERROR", errno, "cannot read /proc/meminfo");
+        return nullptr;
+    }
+    int64 total = -1, available = -1, free_mem = 0, buffers = 0, cached = 0;
+    std::string line;
+    while (std::getline(meminfo, line)) {
+        std::istringstream in(line);
+        std::string key;
+        int64 kb;
+        if (!(in >> key >> kb)) {
+            continue;
+        }
+        if (key == "MemTotal:") {
+            total = kb * 1024;
+        } else if (key == "MemAvailable:") {
+            available = kb * 1024;
+        } else if (key == "MemFree:") {
+            free_mem = kb * 1024;
+        } else if (key == "Buffers:") {
+            buffers = kb * 1024;
+        } else if (key == "Cached:") {
+            cached = kb * 1024;
+        }
+    }
+    if (total < 0) {
+        xsink->raiseException("PROCESS-GETSYSTEMMEMORYINFO-ERROR", "MemTotal is missing in /proc/meminfo");
+        return nullptr;
+    }
+    // kernels before 3.14 do not report MemAvailable
+    if (available < 0) {
+        available = free_mem + buffers + cached;
+    }
+
+    // apply the memory limits of the control groups of this process and their ancestors
+    int64 limit = -1, remaining = -1;
+    std::ifstream cgroup("/proc/self/cgroup");
+    while (cgroup && std::getline(cgroup, line)) {
+        // format: hierarchy-ID:controller-list:cgroup-path
+        size_t p1 = line.find(':');
+        size_t p2 = p1 == std::string::npos ? p1 : line.find(':', p1 + 1);
+        if (p2 == std::string::npos) {
+            continue;
+        }
+        std::string controllers = line.substr(p1 + 1, p2 - p1 - 1);
+        std::string path = line.substr(p2 + 1);
+        const char* root;
+        const char* limit_file;
+        const char* usage_file;
+        if (controllers.empty()) {
+            // cgroup v2
+            root = "/sys/fs/cgroup";
+            limit_file = "/memory.max";
+            usage_file = "/memory.current";
+        } else if (("," + controllers + ",").find(",memory,") != std::string::npos) {
+            // cgroup v1
+            root = "/sys/fs/cgroup/memory";
+            limit_file = "/memory.limit_in_bytes";
+            usage_file = "/memory.usage_in_bytes";
+        } else {
+            continue;
+        }
+        // in a container, the cgroup root is usually the container's own cgroup, so it is checked in any case
+        if (check_cgroup(root, limit_file, usage_file, limit, remaining, xsink)) {
+            return nullptr;
+        }
+        while (path.size() > 1) {
+            if (check_cgroup(root + path, limit_file, usage_file, limit, remaining, xsink)) {
+                return nullptr;
+            }
+            path.erase(path.rfind('/'));
+        }
+    }
+    if (remaining != -1 && remaining < available) {
+        available = remaining;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclSystemMemoryInfo, xsink), xsink);
+    rv->setKeyValue("total", total, xsink);
+    rv->setKeyValue("available", available, xsink);
+    if (limit != -1) {
+        rv->setKeyValue("limit", limit, xsink);
+    }
+    return rv.release();
+}
+#endif
+
+#if defined(__APPLE__) && defined(__MACH__)
+#include <sys/sysctl.h>
+
+QoreHashNode* ProcessPriv::getSystemMemoryInfoDarwin(ExceptionSink* xsink) {
+    uint64_t total = 0;
+    size_t len = sizeof(total);
+    if (sysctlbyname("hw.memsize", &total, &len, nullptr, 0)) {
+        xsink->raiseErrnoException("PROCESS-GETSYSTEMMEMORYINFO-ERROR", errno, "sysctl(hw.memsize) failed");
+        return nullptr;
+    }
+
+    vm_statistics64_data_t vmstat;
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    kern_return_t kr = host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vmstat, &count);
+    if (kr != KERN_SUCCESS) {
+        xsink->raiseException("PROCESS-GETSYSTEMMEMORYINFO-ERROR", "host_statistics64() returned %d: %s", (int)kr,
+            mach_error_string(kr));
+        return nullptr;
+    }
+    // free and inactive pages can be allocated without swapping
+    int64 available = ((int64)vmstat.free_count + (int64)vmstat.inactive_count) * (int64)vm_kernel_page_size;
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclSystemMemoryInfo, xsink), xsink);
+    rv->setKeyValue("total", (int64)total, xsink);
+    rv->setKeyValue("available", available, xsink);
+    return rv.release();
+}
+#endif

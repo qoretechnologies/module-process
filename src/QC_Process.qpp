@@ -69,6 +69,16 @@
 #define HAVE_PROCESS_GETCOMMANDLINE 0
 #endif
 
+// getExecutablePath: supported wherever Boost ext::exe works (the same platforms as ext::cmd)
+#define HAVE_PROCESS_GETEXECUTABLEPATH HAVE_PROCESS_GETCOMMANDLINE
+
+// getSystemMemoryInfo: an implementation is required for each platform
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+#define HAVE_PROCESS_GETSYSTEMMEMORYINFO 1
+#else
+#define HAVE_PROCESS_GETSYSTEMMEMORYINFO 0
+#endif
+
 // getPidsForPort: supported on Linux, macOS, FreeBSD, DragonFly
 #if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__)) \
     || defined(__FreeBSD__) || defined(__DragonFly__)
@@ -88,6 +98,7 @@
 DLLLOCAL extern const TypedHashDecl* hashdeclMemorySummaryInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclProcessResult;
 DLLLOCAL extern const TypedHashDecl* hashdeclResourceUsageInfo;
+DLLLOCAL extern const TypedHashDecl* hashdeclSystemMemoryInfo;
 
 // issue #4293 #4303 it appears that there are race conditions in the Boost process library
 // handling I/O when starting processes, therefore we serialize process startup
@@ -115,6 +126,16 @@ const HAVE_PROCESS_GETDESCRIPTORCOUNT = bool(HAVE_PROCESS_GETDESCRIPTORCOUNT);
 //! Defines if @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" is available
 const HAVE_PROCESS_GETCOMMANDLINE = bool(HAVE_PROCESS_GETCOMMANDLINE);
 
+//! Defines if @ref Qore::Process::Process::getExecutablePath() "Process::getExecutablePath()" is available
+/** @since process 2.1
+*/
+const HAVE_PROCESS_GETEXECUTABLEPATH = bool(HAVE_PROCESS_GETEXECUTABLEPATH);
+
+//! Defines if @ref Qore::Process::Process::getSystemMemoryInfo() "Process::getSystemMemoryInfo()" is available
+/** @since process 2.1
+*/
+const HAVE_PROCESS_GETSYSTEMMEMORYINFO = bool(HAVE_PROCESS_GETSYSTEMMEMORYINFO);
+
 //! Defines if @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" is available
 const HAVE_PROCESS_GETPIDSFORPORT = bool(HAVE_PROCESS_GETPIDSFORPORT);
 
@@ -132,6 +153,21 @@ hashdecl Qore::Process::MemorySummaryInfo {
     int rss;
     //! the private memory size of the process giving a measure of how much memory the process itself is using
     int priv;
+}
+
+//! A hash of system memory information as provided by @ref Qore::Process::Process::getSystemMemoryInfo() "Process::getSystemMemoryInfo()"
+/** @since process 2.1
+*/
+hashdecl Qore::Process::SystemMemoryInfo {
+    //! the physical memory of the system in bytes
+    int total;
+    //! the memory in bytes available to new allocations without swapping
+    /** On systems where the current process runs under a memory limit, such as a Linux control group limit set
+        for a container, the memory remaining under the limit is returned if it is less
+    */
+    int available;
+    //! the memory limit in bytes that applies to the current process, if any, such as a container's limit
+    *int limit;
 }
 
 //! A hash of process execution results as provided by @ref Qore::Process::Process::run() "Process::run()"
@@ -408,6 +444,8 @@ Process::constructor(string command, softlist<softstring> arguments) {
     @throw PROCESS-CONSTRUCTOR-ERROR in case of error. Exception \c desc contains the additional information
     @throw PROCESS-OPTION-ERROR in case invalid option is passed
     @throw PROCESS-SEARCH-PATH-ERROR in case the \c command is not found in given PATH
+    @throw FILESYSTEM-ACCESS-DENIED the program cannot be executed or the working directory cannot be read in the
+    current sandbox
 
     @note this constructor is serialized to work around race conditions in multi-threaded contexts in
     \c boost::process
@@ -861,6 +899,7 @@ int Process::getDescriptorCount() {
     @return string with full path of the \c command
 
     @throw PROCESS-SEARCH-PATH-ERROR in case the \c command is not found in given PATH
+    @throw FILESYSTEM-ACCESS-DENIED the program found cannot be read in the current sandbox
  */
 static *string Process::searchPath(string command) [flags=NAMED_ARGS] {
     boost::filesystem::path p = ProcessPriv::optsPath(command->c_str(), 0, xsink);
@@ -878,6 +917,7 @@ static *string Process::searchPath(string command) [flags=NAMED_ARGS] {
     @return string with full path of the \c command
 
     @throw PROCESS-SEARCH-PATH-ERROR in case the \c command is not found in given PATH
+    @throw FILESYSTEM-ACCESS-DENIED the program found cannot be read in the current sandbox
  */
 static *string Process::searchPath(string command, hash<auto> options) [flags=NAMED_ARGS] {
     boost::filesystem::path p = ProcessPriv::optsPath(command->c_str(), options, xsink);
@@ -1022,6 +1062,7 @@ static list<float> Process::getLoadAvg() [flags=RET_VALUE_ONLY] {
     permission to read the process's file descriptor table)
     @throw PROCESS-GETDESCRIPTORCOUNT-UNSUPPORTED-ERROR this exception is thrown if there is no implementation for
     this method on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED the process's descriptors cannot be read in the current sandbox
 
     @see
     - @ref HAVE_PROCESS_GETDESCRIPTORCOUNT
@@ -1202,6 +1243,7 @@ printf("My child processes: %y\n", children);
 
     @throw PROCESS-GETCHILDPIDS-ERROR in case of error getting child PIDs
     @throw PROCESS-GETCHILDPIDS-UNSUPPORTED-ERROR if getting child PIDs is not supported on this platform
+    @throw FILESYSTEM-ACCESS-DENIED \c /proc cannot be read in the current sandbox
 */
 static list<int> Process::getChildPids(int pid) [flags=NAMED_ARGS] {
     return ProcessPriv::getChildPids(pid, xsink);
@@ -1392,6 +1434,7 @@ printf("Current process: %s\n", cmdline);
     @throw PROCESS-GETCOMMANDLINE-ERROR if the command line cannot be read (e.g. process does not exist
         or insufficient permissions)
     @throw PROCESS-GETCOMMANDLINE-UNSUPPORTED-ERROR if this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED the command line cannot be read in the current sandbox
 
     @note
     - Supported on Linux, macOS, FreeBSD, DragonFly, NetBSD, and OpenBSD
@@ -1405,6 +1448,79 @@ printf("Current process: %s\n", cmdline);
 */
 static string Process::getCommandLine(int pid) [flags=RET_VALUE_ONLY,NAMED_ARGS] {
     return ProcessPriv::getCommandLine(pid, xsink);
+}
+
+//! Returns the path to the executable file of the current process
+/** @par Example:
+    @code{.py}
+string exe = Process::getExecutablePath();
+    @endcode
+
+    @return the absolute path to the executable file of the current process; for a script, this is the path to the
+    interpreter running it
+
+    @throw PROCESS-GETEXECUTABLEPATH-ERROR if the path cannot be read
+    @throw PROCESS-GETEXECUTABLEPATH-UNSUPPORTED-ERROR if this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED the executable path cannot be read in the current sandbox
+
+    @see HAVE_PROCESS_GETEXECUTABLEPATH
+
+    @since process 2.1
+*/
+static string Process::getExecutablePath() [flags=RET_VALUE_ONLY] {
+    return ProcessPriv::getExecutablePath(getpid(), xsink);
+}
+
+//! Returns the path to the executable file of the given process
+/** @par Example:
+    @code{.py}
+string exe = Process::getExecutablePath(pid);
+    @endcode
+
+    @param pid the PID of the process
+
+    @return the absolute path to the executable file of the process
+
+    @throw PROCESS-GETEXECUTABLEPATH-ERROR if the path cannot be read (e.g. the process does not exist or
+        insufficient permissions)
+    @throw PROCESS-GETEXECUTABLEPATH-UNSUPPORTED-ERROR if this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED the executable path cannot be read in the current sandbox
+
+    @note Supported on the same platforms as @ref getCommandLine()
+
+    @see HAVE_PROCESS_GETEXECUTABLEPATH
+
+    @since process 2.1
+*/
+static string Process::getExecutablePath(int pid) [flags=RET_VALUE_ONLY,NAMED_ARGS] {
+    return ProcessPriv::getExecutablePath(pid, xsink);
+}
+
+//! Returns information about the memory of the system
+/** @par Example:
+    @code{.py}
+hash<SystemMemoryInfo> info = Process::getSystemMemoryInfo();
+# one worker process for each 2 GiB available
+int workers = info.available / (2 * 1024 * 1024 * 1024);
+    @endcode
+
+    @return information about the memory of the system, including the memory available to the current process
+
+    @throw PROCESS-GETSYSTEMMEMORYINFO-ERROR if the information cannot be read
+    @throw PROCESS-GETSYSTEMMEMORYINFO-UNSUPPORTED-ERROR if this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED the system memory information cannot be read in the current sandbox
+
+    @note
+    - Supported on Linux and macOS
+    - On Linux, a memory limit of the control group of the current process (cgroup v1 or v2), such as the limit of
+      a container, is returned in \c limit, and the memory remaining under it limits \c available
+
+    @see HAVE_PROCESS_GETSYSTEMMEMORYINFO
+
+    @since process 2.1
+*/
+static hash<SystemMemoryInfo> Process::getSystemMemoryInfo() [flags=RET_VALUE_ONLY] {
+    return ProcessPriv::getSystemMemoryInfo(xsink);
 }
 
 //! Returns a list of PIDs that have a listening TCP socket on the given port
@@ -1422,6 +1538,7 @@ if (pids) {
 
     @throw PROCESS-GETPIDSFORPORT-ERROR if the port is invalid or an error occurs scanning process information
     @throw PROCESS-GETPIDSFORPORT-UNSUPPORTED-ERROR if this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED \c /proc cannot be read in the current sandbox
 
     @note
     - On Linux, this scans /proc/net/tcp and /proc/net/tcp6 for listening sockets and matches
@@ -1454,6 +1571,7 @@ if (pids) {
 
     @throw PROCESS-GETPIDSFORUNIXSOCKET-ERROR if the path is empty or an error occurs scanning process information
     @throw PROCESS-GETPIDSFORUNIXSOCKET-UNSUPPORTED-ERROR if this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED \c /proc cannot be read in the current sandbox
 
     @note
     - On Linux, this parses /proc/net/unix to find socket inodes matching the path, then scans /proc/PID/fd

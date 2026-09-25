@@ -6,7 +6,7 @@ project(qore-process-module)
 option(USE_INTERNAL_BOOST "Enforce using internal copy of boost libraries" OFF)
 
 set (VERSION_MAJOR 2)
-set (VERSION_MINOR 0)
+set (VERSION_MINOR 1)
 set (VERSION_PATCH 0)
 
 # where to look first for cmake modules, before ${CMAKE_ROOT}/Modules/ is checked

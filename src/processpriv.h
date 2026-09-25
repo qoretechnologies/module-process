@@ -149,6 +149,12 @@ public:
     //! Get command line for a specific PID (static)
     DLLLOCAL static QoreStringNode* getCommandLine(int pid, ExceptionSink* xsink);
 
+    //! Get the path to the executable of a specific PID (static)
+    DLLLOCAL static QoreStringNode* getExecutablePath(int pid, ExceptionSink* xsink);
+
+    //! Get system memory information (static)
+    DLLLOCAL static QoreHashNode* getSystemMemoryInfo(ExceptionSink* xsink);
+
     //! Get PIDs listening on a TCP port (static)
     DLLLOCAL static QoreListNode* getPidsForPort(int port, ExceptionSink* xsink);
 
@@ -205,10 +211,12 @@ private:
 
 #if defined(__APPLE__) && defined(__MACH__)
     DLLLOCAL static QoreHashNode* getMemorySummaryInfoDarwin(int pid, ExceptionSink* xsink);
+    DLLLOCAL static QoreHashNode* getSystemMemoryInfoDarwin(ExceptionSink* xsink);
 #endif
 
 #ifdef __linux__
     DLLLOCAL static QoreHashNode* getMemorySummaryInfoLinux(int pid, ExceptionSink* xsink);
+    DLLLOCAL static QoreHashNode* getSystemMemoryInfoLinux(ExceptionSink* xsink);
     DLLLOCAL static QoreHashNode* getMemorySummaryInfoLinuxSmaps(ExceptionSink* xsink, int pid, QoreFile& f,
         ReferenceHolder<QoreHashNode>& rv);
 #endif
