@@ -56,7 +56,7 @@ public class Main inherits QUnit::Test {
             },
             "DARWIN": {
                 "searchPathTest_in": "hostname",
-                "searchPathTest_out": dirname(ENV.SHELL) + "/hostname",
+                "searchPathTest_out": "^(/usr)?/bin/hostname$",
                 "simpleTest_exe": "ls",
                 "simpleTest_arg": ("-l", "-s",),
             },

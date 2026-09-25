@@ -2411,7 +2411,7 @@ QoreHashNode* ProcessPriv::getResourceUsage(int pid, ExceptionSink* xsink) {
     }
 
     // Parse /proc/PID/stat - fields are space-separated
-    // We need: utime (14), stime (15), vsize (23), rss (24), minflt (10), majflt (12)
+    // We need: utime (14), stime (15), rss (24), minflt (10), majflt (12)
     // Field numbering starts at 1
     const char* p = content->c_str();
 
@@ -2425,7 +2425,7 @@ QoreHashNode* ProcessPriv::getResourceUsage(int pid, ExceptionSink* xsink) {
     p = end + 2;  // Skip ") "
 
     // Parse remaining fields (starting at field 3)
-    int64 utime = 0, stime = 0, minflt = 0, majflt = 0, vsize = 0, rss = 0;
+    int64 utime = 0, stime = 0, minflt = 0, majflt = 0, rss = 0;
     int field = 3;
     while (*p) {
         // Skip whitespace
@@ -2441,7 +2441,6 @@ QoreHashNode* ProcessPriv::getResourceUsage(int pid, ExceptionSink* xsink) {
             case 12: majflt = val; break;  // majflt
             case 14: utime = val; break;   // utime (clock ticks)
             case 15: stime = val; break;   // stime (clock ticks)
-            case 23: vsize = val; break;   // vsize
             case 24: rss = val; break;     // rss (pages)
         }
 
