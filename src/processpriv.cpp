@@ -1890,6 +1890,8 @@ QoreHashNode* ProcessPriv::getMemorySummaryInfoLinuxSmaps(ExceptionSink* xsink, 
 #include <mach/mach_port.h>
 #include <mach/vm_region.h>
 #include <mach/vm_page_size.h>
+#include <mach/task.h>
+#include <mach/task_info.h>
 
 QoreHashNode* ProcessPriv::getMemorySummaryInfoDarwin(int pid, ExceptionSink* xsink) {
     // we use proc_taskinfo() to get VSZ and RSS, but only PRIV is interesting for us
@@ -3732,9 +3734,32 @@ QoreHashNode* ProcessPriv::getSystemMemoryInfoDarwin(ExceptionSink* xsink) {
     // free and inactive pages can be allocated without swapping
     int64 available = ((int64)vmstat.free_count + (int64)vmstat.inactive_count) * (int64)vm_kernel_page_size;
 
+    // apply the memory limit of this process (the jetsam limit), which is enforced on the physical footprint;
+    // limit_bytes_remaining is only reported by kernels supporting TASK_VM_INFO revision 4 and is 0 if there is
+    // no limit
+    int64 limit = -1;
+    task_vm_info_data_t vminfo;
+    count = TASK_VM_INFO_COUNT;
+    kr = task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&vminfo), &count);
+    if (kr != KERN_SUCCESS) {
+        xsink->raiseException("PROCESS-GETSYSTEMMEMORYINFO-ERROR", "task_info() returned %d: %s", static_cast<int>(kr),
+            mach_error_string(kr));
+        return nullptr;
+    }
+    if (count >= TASK_VM_INFO_REV4_COUNT && vminfo.limit_bytes_remaining > 0) {
+        int64 remaining = static_cast<int64>(vminfo.limit_bytes_remaining);
+        limit = static_cast<int64>(vminfo.phys_footprint) + remaining;
+        if (remaining < available) {
+            available = remaining;
+        }
+    }
+
     ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclSystemMemoryInfo, xsink), xsink);
     rv->setKeyValue("total", (int64)total, xsink);
     rv->setKeyValue("available", available, xsink);
+    if (limit != -1) {
+        rv->setKeyValue("limit", limit, xsink);
+    }
     return rv.release();
 }
 #endif

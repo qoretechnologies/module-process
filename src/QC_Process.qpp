@@ -163,10 +163,12 @@ hashdecl Qore::Process::SystemMemoryInfo {
     int total;
     //! the memory in bytes available to new allocations without swapping
     /** On systems where the current process runs under a memory limit, such as a Linux control group limit set
-        for a container, the memory remaining under the limit is returned if it is less
+        for a container or a macOS jetsam limit, the memory remaining under the limit is returned if it is less
     */
     int available;
-    //! the memory limit in bytes that applies to the current process, if any, such as a container's limit
+    //! the memory limit in bytes that applies to the current process, if any
+    /** For example, the limit of a container on Linux or a jetsam limit on macOS
+    */
     *int limit;
 }
 
@@ -1514,6 +1516,8 @@ int workers = info.available / (2 * 1024 * 1024 * 1024);
     - Supported on Linux and macOS
     - On Linux, a memory limit of the control group of the current process (cgroup v1 or v2), such as the limit of
       a container, is returned in \c limit, and the memory remaining under it limits \c available
+    - On macOS, a memory limit of the current process (a jetsam limit, as set by \c launchd, for example) is
+      returned in \c limit, and the memory remaining under it limits \c available
 
     @see HAVE_PROCESS_GETSYSTEMMEMORYINFO
 
