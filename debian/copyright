@@ -1,0 +1,273 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: qore-process-module
+Upstream-Contact: David Nichols <david@qore.org>
+Source: https://github.com/qoretechnologies/module-process
+Comment: The +ds source archive retains only patched Boost.Process headers,
+ implementation, CMake file and license from the bundled Boost tree. Other
+ Boost components come from distribution packages. See debian/README.source.
+Files-Excluded: 3rd_party/boost_1_90_0/.circleci
+                3rd_party/boost_1_90_0/.gitattributes
+                3rd_party/boost_1_90_0/.github
+                3rd_party/boost_1_90_0/.gitignore
+                3rd_party/boost_1_90_0/.gitmodules
+                3rd_party/boost_1_90_0/.travis.yml
+                3rd_party/boost_1_90_0/CMakeLists.txt
+                3rd_party/boost_1_90_0/INSTALL
+                3rd_party/boost_1_90_0/Jamroot
+                3rd_party/boost_1_90_0/README.md
+                3rd_party/boost_1_90_0/appveyor.yml
+                3rd_party/boost_1_90_0/boost-build.jam
+                3rd_party/boost_1_90_0/boost.css
+                3rd_party/boost_1_90_0/boost.png
+                3rd_party/boost_1_90_0/boostcpp.jam
+                3rd_party/boost_1_90_0/bootstrap.bat
+                3rd_party/boost_1_90_0/bootstrap.sh
+                3rd_party/boost_1_90_0/doc
+                3rd_party/boost_1_90_0/index.htm
+                3rd_party/boost_1_90_0/index.html
+                3rd_party/boost_1_90_0/libs/Jamfile.v2
+                3rd_party/boost_1_90_0/libs/accumulators
+                3rd_party/boost_1_90_0/libs/algorithm
+                3rd_party/boost_1_90_0/libs/align
+                3rd_party/boost_1_90_0/libs/any
+                3rd_party/boost_1_90_0/libs/array
+                3rd_party/boost_1_90_0/libs/asio
+                3rd_party/boost_1_90_0/libs/assert
+                3rd_party/boost_1_90_0/libs/assign
+                3rd_party/boost_1_90_0/libs/atomic
+                3rd_party/boost_1_90_0/libs/beast
+                3rd_party/boost_1_90_0/libs/bimap
+                3rd_party/boost_1_90_0/libs/bind
+                3rd_party/boost_1_90_0/libs/bloom
+                3rd_party/boost_1_90_0/libs/callable_traits
+                3rd_party/boost_1_90_0/libs/charconv
+                3rd_party/boost_1_90_0/libs/chrono
+                3rd_party/boost_1_90_0/libs/circular_buffer
+                3rd_party/boost_1_90_0/libs/cobalt
+                3rd_party/boost_1_90_0/libs/compat
+                3rd_party/boost_1_90_0/libs/compute
+                3rd_party/boost_1_90_0/libs/concept_check
+                3rd_party/boost_1_90_0/libs/config
+                3rd_party/boost_1_90_0/libs/container
+                3rd_party/boost_1_90_0/libs/container_hash
+                3rd_party/boost_1_90_0/libs/context
+                3rd_party/boost_1_90_0/libs/contract
+                3rd_party/boost_1_90_0/libs/conversion
+                3rd_party/boost_1_90_0/libs/convert
+                3rd_party/boost_1_90_0/libs/core
+                3rd_party/boost_1_90_0/libs/coroutine
+                3rd_party/boost_1_90_0/libs/coroutine2
+                3rd_party/boost_1_90_0/libs/crc
+                3rd_party/boost_1_90_0/libs/date_time
+                3rd_party/boost_1_90_0/libs/describe
+                3rd_party/boost_1_90_0/libs/detail
+                3rd_party/boost_1_90_0/libs/dll
+                3rd_party/boost_1_90_0/libs/dynamic_bitset
+                3rd_party/boost_1_90_0/libs/endian
+                3rd_party/boost_1_90_0/libs/exception
+                3rd_party/boost_1_90_0/libs/fiber
+                3rd_party/boost_1_90_0/libs/filesystem
+                3rd_party/boost_1_90_0/libs/flyweight
+                3rd_party/boost_1_90_0/libs/foreach
+                3rd_party/boost_1_90_0/libs/format
+                3rd_party/boost_1_90_0/libs/function
+                3rd_party/boost_1_90_0/libs/function_types
+                3rd_party/boost_1_90_0/libs/functional
+                3rd_party/boost_1_90_0/libs/fusion
+                3rd_party/boost_1_90_0/libs/geometry
+                3rd_party/boost_1_90_0/libs/gil
+                3rd_party/boost_1_90_0/libs/graph
+                3rd_party/boost_1_90_0/libs/graph_parallel
+                3rd_party/boost_1_90_0/libs/hana
+                3rd_party/boost_1_90_0/libs/hash2
+                3rd_party/boost_1_90_0/libs/headers
+                3rd_party/boost_1_90_0/libs/heap
+                3rd_party/boost_1_90_0/libs/histogram
+                3rd_party/boost_1_90_0/libs/hof
+                3rd_party/boost_1_90_0/libs/icl
+                3rd_party/boost_1_90_0/libs/index.html
+                3rd_party/boost_1_90_0/libs/integer
+                3rd_party/boost_1_90_0/libs/interprocess
+                3rd_party/boost_1_90_0/libs/intrusive
+                3rd_party/boost_1_90_0/libs/io
+                3rd_party/boost_1_90_0/libs/iostreams
+                3rd_party/boost_1_90_0/libs/iterator
+                3rd_party/boost_1_90_0/libs/json
+                3rd_party/boost_1_90_0/libs/lambda
+                3rd_party/boost_1_90_0/libs/lambda2
+                3rd_party/boost_1_90_0/libs/leaf
+                3rd_party/boost_1_90_0/libs/lexical_cast
+                3rd_party/boost_1_90_0/libs/libraries.htm
+                3rd_party/boost_1_90_0/libs/local_function
+                3rd_party/boost_1_90_0/libs/locale
+                3rd_party/boost_1_90_0/libs/lockfree
+                3rd_party/boost_1_90_0/libs/log
+                3rd_party/boost_1_90_0/libs/logic
+                3rd_party/boost_1_90_0/libs/maintainers.txt
+                3rd_party/boost_1_90_0/libs/math
+                3rd_party/boost_1_90_0/libs/metaparse
+                3rd_party/boost_1_90_0/libs/move
+                3rd_party/boost_1_90_0/libs/mp11
+                3rd_party/boost_1_90_0/libs/mpi
+                3rd_party/boost_1_90_0/libs/mpl
+                3rd_party/boost_1_90_0/libs/mqtt5
+                3rd_party/boost_1_90_0/libs/msm
+                3rd_party/boost_1_90_0/libs/multi_array
+                3rd_party/boost_1_90_0/libs/multi_index
+                3rd_party/boost_1_90_0/libs/multiprecision
+                3rd_party/boost_1_90_0/libs/mysql
+                3rd_party/boost_1_90_0/libs/nowide
+                3rd_party/boost_1_90_0/libs/numeric
+                3rd_party/boost_1_90_0/libs/openmethod
+                3rd_party/boost_1_90_0/libs/optional
+                3rd_party/boost_1_90_0/libs/outcome
+                3rd_party/boost_1_90_0/libs/parameter
+                3rd_party/boost_1_90_0/libs/parameter_python
+                3rd_party/boost_1_90_0/libs/parser
+                3rd_party/boost_1_90_0/libs/pfr
+                3rd_party/boost_1_90_0/libs/phoenix
+                3rd_party/boost_1_90_0/libs/platform_maintainers.txt
+                3rd_party/boost_1_90_0/libs/poly_collection
+                3rd_party/boost_1_90_0/libs/polygon
+                3rd_party/boost_1_90_0/libs/pool
+                3rd_party/boost_1_90_0/libs/predef
+                3rd_party/boost_1_90_0/libs/preprocessor
+                3rd_party/boost_1_90_0/libs/process/.circleci
+                3rd_party/boost_1_90_0/libs/process/.drone
+                3rd_party/boost_1_90_0/libs/process/.drone.star
+                3rd_party/boost_1_90_0/libs/process/.gitattributes
+                3rd_party/boost_1_90_0/libs/process/.github
+                3rd_party/boost_1_90_0/libs/process/.gitignore
+                3rd_party/boost_1_90_0/libs/process/.travis.yml
+                3rd_party/boost_1_90_0/libs/process/README.md
+                3rd_party/boost_1_90_0/libs/process/build.jam
+                3rd_party/boost_1_90_0/libs/process/doc
+                3rd_party/boost_1_90_0/libs/process/example
+                3rd_party/boost_1_90_0/libs/process/filter_section_warning.py
+                3rd_party/boost_1_90_0/libs/process/index.html
+                3rd_party/boost_1_90_0/libs/process/meta
+                3rd_party/boost_1_90_0/libs/process/test
+                3rd_party/boost_1_90_0/libs/program_options
+                3rd_party/boost_1_90_0/libs/property_map
+                3rd_party/boost_1_90_0/libs/property_map_parallel
+                3rd_party/boost_1_90_0/libs/property_tree
+                3rd_party/boost_1_90_0/libs/proto
+                3rd_party/boost_1_90_0/libs/ptr_container
+                3rd_party/boost_1_90_0/libs/python
+                3rd_party/boost_1_90_0/libs/qvm
+                3rd_party/boost_1_90_0/libs/random
+                3rd_party/boost_1_90_0/libs/range
+                3rd_party/boost_1_90_0/libs/ratio
+                3rd_party/boost_1_90_0/libs/rational
+                3rd_party/boost_1_90_0/libs/redis
+                3rd_party/boost_1_90_0/libs/regex
+                3rd_party/boost_1_90_0/libs/safe_numerics
+                3rd_party/boost_1_90_0/libs/scope
+                3rd_party/boost_1_90_0/libs/scope_exit
+                3rd_party/boost_1_90_0/libs/serialization
+                3rd_party/boost_1_90_0/libs/signals2
+                3rd_party/boost_1_90_0/libs/smart_ptr
+                3rd_party/boost_1_90_0/libs/sort
+                3rd_party/boost_1_90_0/libs/spirit
+                3rd_party/boost_1_90_0/libs/stacktrace
+                3rd_party/boost_1_90_0/libs/statechart
+                3rd_party/boost_1_90_0/libs/static_assert
+                3rd_party/boost_1_90_0/libs/static_string
+                3rd_party/boost_1_90_0/libs/stl_interfaces
+                3rd_party/boost_1_90_0/libs/system
+                3rd_party/boost_1_90_0/libs/test
+                3rd_party/boost_1_90_0/libs/thread
+                3rd_party/boost_1_90_0/libs/throw_exception
+                3rd_party/boost_1_90_0/libs/timer
+                3rd_party/boost_1_90_0/libs/tokenizer
+                3rd_party/boost_1_90_0/libs/tti
+                3rd_party/boost_1_90_0/libs/tuple
+                3rd_party/boost_1_90_0/libs/type_erasure
+                3rd_party/boost_1_90_0/libs/type_index
+                3rd_party/boost_1_90_0/libs/type_traits
+                3rd_party/boost_1_90_0/libs/typeof
+                3rd_party/boost_1_90_0/libs/units
+                3rd_party/boost_1_90_0/libs/unordered
+                3rd_party/boost_1_90_0/libs/url
+                3rd_party/boost_1_90_0/libs/utility
+                3rd_party/boost_1_90_0/libs/uuid
+                3rd_party/boost_1_90_0/libs/variant
+                3rd_party/boost_1_90_0/libs/variant2
+                3rd_party/boost_1_90_0/libs/vmd
+                3rd_party/boost_1_90_0/libs/wave
+                3rd_party/boost_1_90_0/libs/winapi
+                3rd_party/boost_1_90_0/libs/xpressive
+                3rd_party/boost_1_90_0/libs/yap
+                3rd_party/boost_1_90_0/more
+                3rd_party/boost_1_90_0/rst.css
+                3rd_party/boost_1_90_0/status
+                3rd_party/boost_1_90_0/tools
+
+Files: *
+Copyright: 2003-2026 Qore Technologies, s.r.o.
+License: MIT
+
+Files: debian/*
+Copyright: 2026 David Nichols
+License: MIT
+
+Files: 3rd_party/boost_1_90_0/*
+Copyright: 2001 Ronald Garcia, Indiana University
+           2006-2007 Julio M. Merino Vidal
+           2008 Beman Dawes
+           2008 Ilya Sokolov
+           2008-2012 Boris Schaeling
+           2010 Felipe Tanus
+           2011-2012 Jeff Flinn
+           2016-2024 Klemens D. Morgenstern
+           2020 Peter Dimov
+           2022 Samuel Venable
+           2026 Qore Technologies, s.r.o.
+License: BSL-1.0
+Comment: Boost.Process 1.90.0, with Qore's Linux empty-command-line and
+ macOS KERN_PROCARGS fixes. Its implementation is linked privately into the
+ module; other Boost components are supplied by the system.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a
+ copy of this software and associated documentation files (the "Software"),
+ to deal in the Software without restriction, including without limitation
+ the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ and/or sell copies of the Software, and to permit persons to whom the
+ Software is furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in
+ all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ DEALINGS IN THE SOFTWARE.
+
+License: BSL-1.0
+ Boost Software License - Version 1.0 - August 17th, 2003
+ .
+ Permission is hereby granted, free of charge, to any person or organization
+ obtaining a copy of the software and accompanying documentation covered by
+ this license (the "Software") to use, reproduce, display, distribute,
+ execute, and transmit the Software, and to prepare derivative works of the
+ Software, and to permit third-parties to whom the Software is furnished to
+ do so, all subject to the following:
+ .
+ The copyright notices in the Software and this entire statement, including
+ the above license grant, this restriction and the following disclaimer,
+ must be included in all copies of the Software, in whole or in part, and
+ all derivative works of the Software, unless such copies or derivative
+ works are solely in the form of machine-executable object code generated by
+ a source language processor.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT
+ SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE
+ FOR ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE,
+ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ DEALINGS IN THE SOFTWARE.

@@ -1,0 +1,76 @@
+Debian/Ubuntu packaging for the process module
+=============================================
+
+The native module and qpp compiler metadata belong to qore-process-module.
+HTML documentation and upstream test examples belong to the optional
+qore-process-module-doc package. Debhelper creates matching debug symbols.
+
+Build prerequisites and supported scope
+--------------------------------------
+
+Use an isolated native build environment containing the packaged Qore runtime
+and libqore-dev, then install the Build-Depends from debian/control. The current
+qualification target is Ubuntu 26.04 amd64 with Qore 3.0 development packages.
+Other distributions and architectures need their own qualified SDK, Boost 1.90
+development packages and native build/test run. Cross builds are rejected
+because qpp and Qore execute during compilation.
+
+The build uses distribution compiler/hardening flags and system Boost headers
+and Boost.Filesystem. It retains the patched Boost.Process 1.90.0 implementation
+as a private static library inside the module. Upstream Boost 1.90.0 lacks the
+Linux empty-command-line crash fix from commit 350c2a225 and the macOS argument
+parsing fix from 2ab3b843a. Replacing this implementation with the unpatched
+distribution library would lose those fixes. Review those patches when updating
+Boost; the exact system Boost version check prevents mixing incompatible headers.
+No separate Boost library is installed by this package.
+
+The +ds original archive excludes unused bundled Boost components, tests and
+documentation. The complete exclusion list is in debian/copyright. Retained
+Boost.Process code carries the Boost Software License and its copyright notices.
+
+Native Qore modules resolve Qore symbols at load time without linking libqore.
+debian/rules derives a minimum runtime and libqore SONAME package dependency from
+the installed SDK; dh_shlibdeps supplies other shared-library dependencies.
+The runtime package is not Multi-Arch: same because it requires the native Qore
+interpreter and includes shared compiler metadata. There are no AOT user modules
+or Qore dependency trailers in this module; ordinary dh_strip is appropriate.
+
+Source and binary builds
+------------------------
+
+Use a fresh version for every changed upload. This snapshot version sorts before
+the eventual 2.1.0 release. From a clean committed checkout, export the sources
+without debian/, repack using debian/copyright's Files-Excluded list (for example
+with mk-origtargz --repack --repack-suffix +ds), and name the original archive:
+
+    qore-process-module_2.1.0~git20260928.1+ds.orig.tar.xz
+
+Extract it into qore-process-module-2.1.0~git20260928.1+ds, copy debian/ there,
+and create the source package with dpkg-buildpackage -S -us -uc. Extract the .dsc
+with dpkg-source -x in a clean build directory. With dependencies preinstalled,
+build as an unprivileged user with networking disabled:
+
+    dpkg-buildpackage -b -us -uc
+
+The repacked source requires USE_SYSTEM_BOOST_DEPENDENCIES=ON, which debian/rules
+sets explicitly. The complete Git checkout retains the ordinary bundled build.
+Architecture-only builds (-B) do not need Doxygen; architecture-independent
+builds (-A) produce documentation. Both DEB_BUILD_OPTIONS=nodoc and
+DEB_BUILD_PROFILES=nodoc suppress documentation; the profile also omits the doc
+package. Do not use nocheck for qualification.
+
+Qualification and publication
+-----------------------------
+
+The upstream process suite runs against the new module during the build,
+including child input/output, exit status, signals, pipelines, sandbox and
+process-information tests. Python and procps are test dependencies; no external
+service is needed. Installed autopkgtests run the same suite away from the build
+tree, then use the installed SDK and metadata to compile and run a program with
+named Process::run arguments.
+
+Check source/binary Lintian, detached debug symbols and hardening, installation
+without libqore-dev, documentation/debug coinstallation, dpkg -V, purge/reinstall,
+and reproducibility from two distinct build directories. Retain the exact source
+commit, source/package hashes, dependency versions and logs. Publishing to the
+testing PPA is separate from approval for a final general release.

@@ -1,0 +1,40 @@
+Source: qore-process-module
+Section: interpreters
+Priority: optional
+Maintainer: David Nichols <david@qore.org>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.8),
+               libqore-dev (>= 3.0.0~),
+               qore (>= 3.0.0~),
+               libboost1.90-dev,
+               libboost-filesystem1.90-dev,
+               python3 <!nocheck>,
+               procps <!nocheck>
+Build-Depends-Indep: doxygen <!nodoc>
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://qore.org
+Vcs-Git: https://github.com/qoretechnologies/module-process.git
+Vcs-Browser: https://github.com/qoretechnologies/module-process
+
+Package: qore-process-module
+Architecture: any
+Depends: ${qore:Depends},
+         ${shlibs:Depends},
+         ${misc:Depends}
+Suggests: qore-process-module-doc
+Description: child process management module for Qore
+ This module starts and supervises child processes, redirects their input and
+ output, manages pipelines and process groups, and reads process and system
+ resource information. Compiler metadata is included for Qore's tools.
+
+Package: qore-process-module-doc
+Section: doc
+Architecture: all
+Multi-Arch: foreign
+Build-Profiles: <!nodoc>
+Depends: ${misc:Depends}
+Suggests: qore-process-module
+Description: documentation and examples for Qore's process module
+ This package contains the HTML API reference and example tests for Qore's
+ process management module.

@@ -1,0 +1,7 @@
+qore-process-module (2.1.0~git20260928.1+ds-0qore1~ubuntu26.04) resolute; urgency=medium
+
+  * Package the native module, compiler metadata, docs and debug symbols.
+  * Retain patched Boost.Process and use system Boost dependencies.
+  * Check the upstream suite and installed runtime and compiler integration.
+
+ -- David Nichols <david@qore.org>  Mon, 28 Sep 2026 20:26:05 -0000

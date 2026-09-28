@@ -1,0 +1,7 @@
+Tests: runtime
+Depends: qore-process-module, qore, python3, procps
+# QUnit writes progress messages to stderr even when every assertion passes.
+Restrictions: allow-stderr
+
+Tests: compiler
+Depends: qore-process-module, libqore-dev

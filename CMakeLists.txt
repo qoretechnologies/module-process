@@ -4,6 +4,8 @@ project(qore-process-module)
 
 # internal copy of boost was prepared as seen in 3rd_party README file
 option(USE_INTERNAL_BOOST "Enforce using internal copy of boost libraries" OFF)
+option(USE_SYSTEM_BOOST_DEPENDENCIES
+    "Use system Boost dependencies with the patched internal Boost.Process" OFF)
 
 set (VERSION_MAJOR 2)
 set (VERSION_MINOR 1)
@@ -14,9 +16,36 @@ set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake )
 
 find_package(Qore 2.0 REQUIRED)
 
-set(BOOST_INCLUDE_LIBRARIES "filesystem;system;process")
 add_compile_options(-fPIC)
-add_subdirectory(3rd_party/boost)
+if(USE_SYSTEM_BOOST_DEPENDENCIES)
+    if(USE_INTERNAL_BOOST)
+        message(FATAL_ERROR "USE_SYSTEM_BOOST_DEPENDENCIES conflicts with USE_INTERNAL_BOOST")
+    endif()
+    # Boost.Process carries correctness fixes that are not in upstream 1.90.0.
+    # Keep that implementation while using distribution headers and libraries
+    # for its dependencies. An exact version prevents mixing Boost releases.
+    find_package(Boost 1.90.0 EXACT CONFIG REQUIRED COMPONENTS filesystem)
+    # Distribution BoostConfig packages export the header-only components as
+    # Boost::headers. Boost.Process's own CMake file names them individually.
+    foreach(component algorithm asio config core fusion iterator move optional
+            system tokenizer type_index winapi)
+        if(NOT TARGET Boost::${component})
+            add_library(Boost::${component} INTERFACE IMPORTED)
+            set_target_properties(Boost::${component} PROPERTIES
+                INTERFACE_LINK_LIBRARIES Boost::headers)
+        endif()
+    endforeach()
+    function(qore_process_add_patched_boost)
+        # This library is private to the module and must not need installation.
+        set(BUILD_SHARED_LIBS OFF)
+        set(BOOST_SUPERPROJECT_VERSION 1.90.0)
+        add_subdirectory(3rd_party/boost/libs/process)
+    endfunction()
+    qore_process_add_patched_boost()
+else()
+    set(BOOST_INCLUDE_LIBRARIES "filesystem;system;process")
+    add_subdirectory(3rd_party/boost)
+endif()
 
 include(CheckCXXCompilerFlag)
 CHECK_CXX_COMPILER_FLAG("-std=c++17" COMPILER_SUPPORTS_CXX17)
@@ -74,7 +103,6 @@ endif()
 qore_external_binary_module(
     ${module_name}
     "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}"
-    ${Boost_LIBRARIES} ${WIN_LIBS} ${SUNOS_LIBS}
 )
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     target_link_libraries(${module_name} PRIVATE Boost::process proc)
@@ -85,7 +113,7 @@ else()
     target_link_libraries(${module_name} PRIVATE Boost::process)
 endif()
 # dlsym() for Process::releaseFreeMemory()
-target_link_libraries(${module_name} PRIVATE ${CMAKE_DL_LIBS})
+target_link_libraries(${module_name} PRIVATE ${CMAKE_DL_LIBS} ${WIN_LIBS} ${SUNOS_LIBS})
 
 qore_dist("${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 

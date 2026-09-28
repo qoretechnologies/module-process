@@ -1,0 +1,2 @@
+usr/lib/*/qore-modules/process-api-*.qmod
+usr/share/qore/metadata/process/*.meta.json

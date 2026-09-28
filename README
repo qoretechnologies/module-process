@@ -5,8 +5,11 @@ Requirements:
  - Qore development environment (lib and headers)
  - Cmake
  - (optional) Doxygen
- - boost >= 1.63: system, filesystem or use -DUSE_INTERNAL_BOOST=1
-   to use an internal copy of boost submodules
+ - Boost 1.90.0 is bundled, including required Boost.Process correctness fixes.
+   By default the bundled dependencies are built too. Distribution builds can
+   use -DUSE_SYSTEM_BOOST_DEPENDENCIES=ON with Boost 1.90.0 development packages
+   to use system dependencies and link only the patched Boost.Process library
+   privately into the module. This mode requires USE_INTERNAL_BOOST to be OFF.
 
 Use so called "out of source" build
 
@@ -18,4 +21,3 @@ Use so called "out of source" build
  - make install
 
 Some tests are located in "test" directory.
-

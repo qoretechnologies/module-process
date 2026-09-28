@@ -1,0 +1,9 @@
+Document: qore-process-module
+Title: Qore Process Module Reference
+Author: Qore Technologies, s.r.o.
+Abstract: API reference for managing processes and their input and output in Qore.
+Section: Programming
+
+Format: HTML
+Index: /usr/share/doc/qore-process-module-doc/html/index.html
+Files: /usr/share/doc/qore-process-module-doc/html/*.html

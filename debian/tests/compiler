@@ -1,0 +1,16 @@
+#!/bin/sh
+# Copyright (C) 2026 David Nichols
+# SPDX-License-Identifier: MIT
+set -eu
+unset QORE_MODULE_DIR QORE_MODULE_DIR_ONLY QORE_INCLUDE_DIR LD_LIBRARY_PATH LD_PRELOAD
+cd "$AUTOPKGTEST_TMP"
+cat > process-smoke.q <<'EOF'
+%modern
+%requires process
+hash<auto> result = Process::run(command: "/bin/echo", arguments: ("process-aot-ok",));
+if (!result.ok || result.stdout != "process-aot-ok\n") {
+    exit(1);
+}
+EOF
+/usr/bin/qcc -o process-smoke process-smoke.q
+./process-smoke
