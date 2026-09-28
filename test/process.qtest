@@ -128,6 +128,7 @@ public class Main inherits QUnit::Test {
         addTestCase("releaseFreeMemory test", \releaseFreeMemoryTest());
         addTestCase("getPidsForPort test", \getPidsForPortTest());
         addTestCase("getPidsForUnixSocket test", \getPidsForUnixSocketTest());
+        addTestCase("a child starts with the default signal state", \childSignalStateTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -1715,6 +1716,21 @@ auto sub descriptors() { return Process::getDescriptorCount(getpid()); }
             assertThrows("PROCESS-GETPIDSFORPORT-ERROR", \Process::getPidsForPort(), 99999);
         } else {
             assertThrows("PROCESS-GETPIDSFORPORT-UNSUPPORTED-ERROR", \Process::getPidsForPort(), 80);
+        }
+    }
+
+    #! A child is not started with the caller's blocked signals or its ignored SIGPIPE
+    /** Qore blocks signals in its threads and ignores SIGPIPE; a child that inherited that state could not be
+        stopped with SIGTERM and would not end on SIGPIPE.  Each shell sends the signal to itself and prints
+        "alive" only if the signal did not end it.
+    */
+    childSignalStateTest() {
+        foreach string sig in (("TERM", "PIPE")) {
+            MyOutputStream out();
+            Process p("/bin/sh", ("-c", sprintf("kill -%s $$; echo alive", sig)), {"stdout": out});
+            assertTrue(p.wait(30s), sprintf("SIG%s: the child ends", sig));
+            assertEq("", out.buf ?? "", sprintf("SIG%s ends the child before it prints", sig));
+            assertNeq(0, p.exitCode(), sprintf("SIG%s: the child does not report success", sig));
         }
     }
 

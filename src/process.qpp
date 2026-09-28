@@ -169,6 +169,9 @@ Version 1.0. (See http://www.boost.org/LICENSE_1_0.txt)
     - added PID validation in sendSignal() and terminate() to reject PIDs <= 0
     - added safety check in getChildPids() to reject PID 1 (init) and invalid PIDs
     - child processes now run in their own process group (setpgid) to isolate signals
+    - child processes now start with no blocked signals and with the default action for \c SIGPIPE; they
+      inherited the signal mask of the calling Qore thread, which blocks signals, so a child without its own
+      handlers could not be stopped with \c SIGTERM, and they inherited Qore's ignored \c SIGPIPE
     - patched boost::process v1 terminate.hpp to add pid <= 0 validation (matching v2 behavior)
     - fixed empty code block in terminate() when handling ECHILD errors
     - fixed getDescriptorCount() signature inconsistency on unsupported platforms

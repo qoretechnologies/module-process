@@ -26,6 +26,8 @@
 
 #include <unistd.h>
 #include <dirent.h>
+#include <signal.h>
+#include <string.h>
 #include <sched.h>
 
 // std
@@ -144,6 +146,19 @@ struct callback_initializer {
         // process group. This prevents signals sent to the child's process group from
         // affecting the parent and other processes in the parent's group.
         setpgid(0, 0);
+
+        // Start the child with the default signal state, whatever the calling thread had: Qore blocks signals in
+        // its threads and ignores SIGPIPE, and a blocked or ignored signal is kept across exec, so a child without
+        // its own handlers could otherwise never be stopped with SIGTERM.  Other ignored signals are kept, so a
+        // child of a process started with nohup still ignores SIGHUP.
+        sigset_t empty;
+        sigemptyset(&empty);
+        sigprocmask(SIG_SETMASK, &empty, nullptr);
+        struct sigaction dfl;
+        memset(&dfl, 0, sizeof dfl);
+        dfl.sa_handler = SIG_DFL;
+        sigemptyset(&dfl.sa_mask);
+        sigaction(SIGPIPE, &dfl, nullptr);
 
         // Set process priority if requested
         if (setNice) {
