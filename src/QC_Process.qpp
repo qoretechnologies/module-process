@@ -874,9 +874,8 @@ hash<MemorySummaryInfo> Process::getMemorySummaryInfo() {
     return ProcessPriv::getMemorySummaryInfo(pid, xsink);
 }
 
-//! Returns the number of file descriptors open for the given PID
-/** @param pid the PID of the process
-    @return the number of file descriptors open for the given PID
+//! Returns the number of file descriptors open for this process
+/** @return the number of file descriptors open for this process
 
     @throw PROCESS-GETDESCRIPTORCOUNT-ERROR an error occurred getting the descriptor count (PID does not exist or no
     permission to read the process's file descriptor table)

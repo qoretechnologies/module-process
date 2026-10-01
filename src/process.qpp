@@ -110,6 +110,7 @@ Version 1.0. (See http://www.boost.org/LICENSE_1_0.txt)
     @section process_relnotes Process Module Release History
 
     @subsection process_v2_1 process v2.1
+    - Documentation builds use public Qore declarations with current CMake and Doxygen.
 
     <b>New Features:</b>
     - added @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" to get the full command

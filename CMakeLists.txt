@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5.2)
+cmake_minimum_required(VERSION 3.8...3.31)
 
 project(qore-process-module)
 
@@ -87,7 +87,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
     set(SUNOS_LIBS proc)
 endif (CMAKE_SYSTEM_NAME STREQUAL "SunOS")
 
-qore_wrap_qpp_value(QPP_SOURCES METALIST QPP_META_SRC ${QPP_SRC})
+qore_wrap_qpp_value(QPP_SOURCES DOXLIST QPP_DOX_SOURCES METALIST QPP_META_SRC ${QPP_SRC})
 
 SET (module_name "process")
 
@@ -99,6 +99,9 @@ ${CMAKE_BINARY_DIR}/unix-config.h)
 if (DEFINED ENV{DOXYGEN_EXECUTABLE})
     set(DOXYGEN_EXECUTABLE $ENV{DOXYGEN_EXECUTABLE})
 endif()
+
+# Document Qore declarations, excluding private implementation bodies.
+set(MODULE_DOX_INPUT ${QPP_DOX_SOURCES})
 
 qore_external_binary_module(
     ${module_name}
