@@ -1,134 +1,112 @@
-%define module_api %(qore --module-api 2>/dev/null)
-%define module_dir %{_libdir}/qore-modules
-
-%if 0%{?sles_version}
-
-%define dist .sles%{?sles_version}
-
+# Copyright (C) 2026 Qore Technologies, s.r.o.
+# SPDX-License-Identifier: MIT
+# Use the pinned source epoch for RPM headers and installed file timestamps.
+%global source_date_epoch_from_changelog 1
+%global use_source_date_epoch_as_buildtime 1
+%if v"%{rpmversion}" >= v"4.20"
+%global build_mtime_policy clamp_to_source_date_epoch
 %else
-%if 0%{?suse_version}
-
-# get *suse release major version
-%define os_maj %(echo %suse_version|rev|cut -b3-|rev)
-# get *suse release minor version without trailing zeros
-%define os_min %(echo %suse_version|rev|cut -b-2|rev|sed s/0*$//)
-
-%if %suse_version
-%define dist .opensuse%{os_maj}_%{os_min}
+%global clamp_mtime_to_source_date_epoch 1
 %endif
-
-%endif
-%endif
-
-# see if we can determine the distribution type
-%if 0%{!?dist:1}
-%define rh_dist %(if [ -f /etc/redhat-release ];then cat /etc/redhat-release|sed "s/[^0-9.]*//"|cut -f1 -d.;fi)
-%if 0%{?rh_dist}
-%define dist .rhel%{rh_dist}
+%bcond_without tests
+%bcond_without docs
+%if 0%{?fedora}
+%bcond_without system_boost
 %else
-%define dist .unknown
+%bcond_with system_boost
 %endif
-%endif
-
-Summary: process module for Qore
 Name: qore-process-module
-Version: 2.0.0
-Release: 1%{dist}
-License: LGPL-2.1-or-later
-Group: Development/Languages/Other
-URL: http://www.qore.org
-Source: https://github.com/qorelanguage/module-process/releases/download/release-%{version}/%{name}-%{version}.tar.bz2
-BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
-Requires: /usr/bin/env
-Requires: qore-module-api-%{module_api}
-BuildRequires: cmake >= 3.5
+Version: 2.1.0
+Release: 1%{?dist}
+Summary: Child process control and system process information for Qore
+License: MIT AND BSL-1.0
+URL: https://github.com/qoretechnologies/module-process
+Source0: %{name}-%{version}.tar.xz
+BuildRequires: cmake >= 3.8
+BuildRequires: make
 BuildRequires: gcc-c++
-BuildRequires: qore-devel >= 2.0
-BuildRequires: qore-stdlib >= 2.0
-BuildRequires: qore >= 2.0
-BuildRequires: openssl-devel
+%if %{with system_boost}
+# Match the patched Boost.Process implementation's exact dependency release.
+BuildRequires: boost-devel = 1.90.0
+Provides: bundled(boost-process) = 1.90.0
+%else
+# EL10 and Leap provide older Boost releases; retain the matched vendored tree.
+Provides: bundled(boost) = 1.90.0
+%endif
+%if %{with tests}
+BuildRequires: python3
+BuildRequires: procps
+%endif
+BuildRequires: qore-devel >= 3.0.0~
+BuildRequires: qore-rpm-macros >= 3.0.0~
+%if %{with docs}
 BuildRequires: doxygen
-%if 0%{?el7}
-BuildRequires:  devtoolset-7-gcc-c++
+%if 0%{?suse_version}
+BuildRequires: util-linux
+%else
+BuildRequires: util-linux-core
+%endif
 %endif
 
 %description
-process API module for the Qore Programming Language.
+Child process creation, input/output streams, environment management, signals,
+pipelines and process resource information. The package retains the patched
+Boost.Process implementation needed for correct process argument handling.
 
-%if 0%{?suse_version}
-%debug_package
+%if %{with docs}
+%package doc
+Summary: Process module reference documentation and examples
+BuildArch: noarch
+%description doc
+API reference and examples for Qore's process control module.
 %endif
 
 %prep
-%setup -q
-
+%autosetup
 %build
-%if 0%{?el7}
-# enable devtoolset7
-. /opt/rh/devtoolset-7/enable
+%{?set_build_flags}
+. %{_rpmconfigdir}/qore/module-env.sh
+qore_set_source_prefix_maps "%{qore_debug_source_dir}"
+cmake -S . -B build -G 'Unix Makefiles' \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
+  -DCMAKE_INSTALL_PREFIX=%{_prefix} \
+  -DUSE_SYSTEM_BOOST_DEPENDENCIES=%{?with_system_boost:ON}%{!?with_system_boost:OFF} \
+  -DCMAKE_SKIP_RPATH=ON -DCMAKE_IGNORE_PREFIX_PATH=/usr/local \
+  -DQore_DIR=%{_libdir}/cmake/Qore -DQORE_EXECUTABLE=/usr/bin/qore \
+  -DQORE_QPP_EXECUTABLE=/usr/bin/qpp \
+  -DCMAKE_DISABLE_FIND_PACKAGE_Doxygen=%{!?with_docs:ON}%{?with_docs:OFF}
+cmake --build build -- %{?_smp_mflags}
+%if %{with docs}
+printf "\nWARN_AS_ERROR = FAIL_ON_WARNINGS\n" >> build/Doxyfile
+cmake --build build --target docs -- %{?_smp_mflags}
 %endif
-export CXXFLAGS="%{?optflags}"
-cmake -DCMAKE_INSTALL_PREFIX=%{_prefix} -DCMAKE_BUILD_TYPE=RELWITHDEBINFO -DCMAKE_SKIP_RPATH=1 -DCMAKE_SKIP_INSTALL_RPATH=1 -DCMAKE_SKIP_BUILD_RPATH=1 -DCMAKE_PREFIX_PATH=${_prefix}/lib64/cmake/Qore .
-make %{?_smp_mflags}
-make %{?_smp_mflags} docs
-sed -i 's/#!\/usr\/bin\/env qore/#!\/usr\/bin\/qore/' test/*.qtest
-
 %install
-make DESTDIR=%{buildroot} install %{?_smp_mflags}
-
+DESTDIR=%{buildroot} cmake --install build
+chmod 755 %{buildroot}%{_libdir}/qore-modules/process-api-*.qmod
+%if %{with docs}
+install -d %{buildroot}%{_docdir}/%{name}-doc
+cp -a build/docs/process/html %{buildroot}%{_docdir}/%{name}-doc/
+install -d %{buildroot}%{_docdir}/%{name}-doc/examples/test
+install -m644 test/*.qtest test/*.q %{buildroot}%{_docdir}/%{name}-doc/examples/test/
+hardlink -t -O %{buildroot}%{_docdir}/%{name}-doc
+%endif
 %check
-qore -l ./process-api-1.4.qmod test/process.qtest -v
-
-%clean
-rm -rf $RPM_BUILD_ROOT
-
+%if %{with tests}
+. %{_rpmconfigdir}/qore/module-env.sh
+timeout 600 /usr/bin/qore -b --enable-debug \
+  -l "$PWD/build/process-api-$(/usr/bin/qore --latest-module-api).qmod" test/process.qtest -v
+%endif
 %files
-%defattr(-,root,root,-)
-%{module_dir}
-%doc COPYING README test/process.qtest test/test_cwd.q test/test_env.q test/test_false.q test/test_io.q test/test_output.q test/test_signal.q test/test_sleep.q test/test_stdin_eof.q test/test_true.q test/test_utf8.q
-
-%package doc
-Summary: Documentation and examples for the Qore process module
-Group: Development/Languages/Other
-
-%description doc
-This package contains the HTML documentation and example programs for the Qore
-process module.
-
+%license COPYING 3rd_party/boost/LICENSE_1_0.txt
+%doc README
+%{_libdir}/qore-modules/process-api-*.qmod
+%dir %{_datadir}/qore/metadata/process
+%{_datadir}/qore/metadata/process/*.meta.json
+%if %{with docs}
 %files doc
-%defattr(-,root,root,-)
-%doc docs/process test
-
+%license COPYING
+%doc %{_docdir}/%{name}-doc/
+%endif
 %changelog
-* Mon Dec 30 2025 David Nichols <david.nichols@qoretechnologies.com>
-- updated to boost 1.90 (includes exit-code fix for terminate + async_wait)
-- added PID validation to static Process::terminate(), Process::checkPid(),
-  and Process::waitForTermination() to prevent kill(-1) from killing all processes
-
-* Sun Dec 29 2025 David Nichols <david.nichols@qoretechnologies.com>
-- added sendSignal() method to send signals to processes
-- added closeStdin() method to close stdin pipe and signal EOF
-- added Process::run() static method for synchronous command execution with timeout
-- added getResourceUsage() method and static variant for resource usage stats
-- added getChildPids() method and static variant to get child process IDs
-- added terminateTree() method to terminate process and all descendants
-- added Process::pipeline() static method for command pipelines
-- added constructor options: encoding, shell, nice, limits
-- added critical safety checks to prevent kill(-1) from killing all user processes
-- child processes now run in their own process group for signal isolation
-
-* Mon Aug 11 2025 David Nichols <david.nichols@qoretechnologies.com>
-- updated to use boost process 2.0
-- updated to version 2.0
-
-* Mon Dec 19 2022 David Nichols <david.nichols@qoretechnologies.com>
-- updated to version 1.0.5
-
-* Mon Jan 10 2022 David Nichols <david.nichols@qoretechnologies.com>
-- updated to version 1.0.4
-
-* Mon Dec 27 2021 David Nichols <david.nichols@qoretechnologies.com>
-- updated to version 1.0.3
-
-* Fri Sep 17 2021 David Nichols <david.nichols@qoretechnologies.com>
-- initial spec file
+* Thu Oct 01 2026 David Nichols <david@qore.org> - 2.1.0-1
+- Package process control, metadata, documentation and the complete local suite.

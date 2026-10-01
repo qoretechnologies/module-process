@@ -1,0 +1,11 @@
+#!/bin/sh
+# Copyright (C) 2026 Qore Technologies, s.r.o.
+# SPDX-License-Identifier: MIT
+set -eu
+export LC_ALL=C.UTF-8
+unset QORE_MODULE_DIR QORE_MODULE_DIR_ONLY QORE_INCLUDE_DIR LD_LIBRARY_PATH LD_PRELOAD
+# The suite starts helper programs relative to its own test directory.
+mkdir -p "${QORE_RPM_TEST_TMP:?set QORE_RPM_TEST_TMP}/test"
+cp test/*.qtest test/*.q "${QORE_RPM_TEST_TMP:?set QORE_RPM_TEST_TMP}/test/"
+cd "${QORE_RPM_TEST_TMP:?set QORE_RPM_TEST_TMP}"
+timeout 600 /usr/bin/qore -b --enable-debug test/process.qtest -v
