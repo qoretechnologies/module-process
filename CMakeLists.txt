@@ -103,9 +103,17 @@ endif()
 # Document the main page and the Qore declarations, excluding private implementation bodies.
 set(QORE_DOX_TMPL_SRC
     docs/mainpage.dox.tmpl
+    docs/guide-process_license.dox.tmpl
+    docs/guide-process_platforms.dox.tmpl
+    docs/guide-process_relnotes.dox.tmpl
 )
 set(MODULE_DOX_INPUT ${CMAKE_BINARY_DIR}/mainpage.dox ${QPP_DOX_SOURCES})
 
+list(APPEND MODULE_DOX_INPUT
+    ${CMAKE_CURRENT_BINARY_DIR}/guide-process_license.dox
+    ${CMAKE_CURRENT_BINARY_DIR}/guide-process_platforms.dox
+    ${CMAKE_CURRENT_BINARY_DIR}/guide-process_relnotes.dox
+)
 qore_external_binary_module(
     ${module_name}
     "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}"

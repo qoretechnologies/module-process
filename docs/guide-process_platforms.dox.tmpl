@@ -1,0 +1,58 @@
+/* Copyright (C) 2026 Qore Technologies, s.r.o. */
+
+/** @page process_platformsguide Platform Support
+
+    @tableofcontents
+
+    @section process_platforms_linux Linux
+    Full support for all features:
+    - Process creation and management
+    - Memory information via \c /proc/PID/statm and \c /proc/PID/smaps_rollup (or \c smaps fallback)
+    - File descriptor counting via \c /proc/PID/fd
+    - Signal sending via kill()
+    - All executor callbacks
+    - @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" via \c /proc/PID/cmdline
+    - @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" via \c /proc/net/tcp + \c /proc/PID/fd
+    - @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" via \c /proc/net/unix + \c /proc/PID/fd
+
+    @section process_platforms_macos macOS / Darwin
+    Full support with some limitations:
+    - Process creation and management: fully supported
+    - Memory information: requires special permissions for other processes
+      - Reading memory of your own process works normally
+      - Reading memory of other processes requires either root privileges or
+        the \c "com.apple.system-task-ports" entitlement
+    - File descriptor counting: fully supported via \c libproc
+    - Signal sending: fully supported
+    - @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" via \c KERN_PROCARGS sysctl (returns full command line with arguments)
+    - @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" via native \c libproc APIs (only LISTEN-state TCP sockets)
+    - @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" via native \c libproc APIs
+    - @note May require elevated privileges to see other users' processes
+
+    @section process_platforms_bsd FreeBSD / DragonFly BSD
+    Good support:
+    - Process creation and management: fully supported
+    - @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" via kvm library
+    - @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" via \c sysctl \c KERN_PROC_FILEDESC
+    - @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" via \c sysctl \c KERN_PROC_FILEDESC
+
+    @section process_platforms_netbsd_openbsd NetBSD / OpenBSD
+    Partial support:
+    - Process creation and management: fully supported
+    - @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" via kvm library
+    - @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" NOT supported
+    - @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" NOT supported
+
+    @section process_platforms_solaris Solaris
+    Partial support:
+    - Process creation and management: fully supported
+    - Memory information: fully supported via \c libproc and \c /proc/PID/map
+    - File descriptor counting: NOT supported
+    - Signal sending: fully supported
+
+    @section process_platforms_windows Windows
+    Limited support (not fully implemented):
+    - Basic process creation may work
+    - Many POSIX-specific features are not available
+    - Signal sending is not supported
+*/
