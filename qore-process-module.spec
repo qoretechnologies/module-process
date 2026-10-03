@@ -72,6 +72,7 @@ cmake -S . -B build -G 'Unix Makefiles' \
   -DCMAKE_INSTALL_PREFIX=%{_prefix} \
   -DUSE_SYSTEM_BOOST_DEPENDENCIES=%{?with_system_boost:ON}%{!?with_system_boost:OFF} \
   -DCMAKE_SKIP_RPATH=ON -DCMAKE_IGNORE_PREFIX_PATH=/usr/local \
+  -DQORE_GENERATE_JAVA_BINDINGS=OFF \
   -DQore_DIR=%{_libdir}/cmake/Qore -DQORE_EXECUTABLE=/usr/bin/qore \
   -DQORE_QPP_EXECUTABLE=/usr/bin/qpp \
   -DCMAKE_DISABLE_FIND_PACKAGE_Doxygen=%{!?with_docs:ON}%{?with_docs:OFF}
