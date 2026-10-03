@@ -95,6 +95,8 @@ hardlink -t -O %{buildroot}%{_docdir}/%{name}-doc
 . %{_rpmconfigdir}/qore/module-env.sh
 timeout 600 /usr/bin/qore -b --enable-debug \
   -l "$PWD/build/process-api-$(/usr/bin/qore --latest-module-api).qmod" test/process.qtest -v
+python3 -B -W error test/run-process-state.py \
+  --module "$PWD/build/process-api-$(/usr/bin/qore --latest-module-api).qmod"
 %endif
 %files
 %license COPYING 3rd_party/boost/LICENSE_1_0.txt
