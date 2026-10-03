@@ -1,0 +1,226 @@
+/** @mainpage %Qore %Process Module
+
+    @tableofcontents
+
+    @section processintro Process Module Introduction
+
+The %process module is a Qore wrapper around
+<a href="http://www.boost.org/doc/libs/release/libs/process/">Boost.Process</a> by Klemens David Morgenstern.
+
+Primary class provided by this module:
+- @ref Qore::Process::Process "Process"
+
+The %process module provides an API to manage system processes. It can be used to:
+ - create child processes
+ - communicate with child processes through standard input/output/error
+ - wait for processes to exit
+ - terminate processes
+ - send signals to processes (POSIX only)
+ - get process memory and CPU load information
+ - get file descriptor counts
+ - and more
+
+    @section process_platforms Platform Support
+
+    @subsection process_platforms_linux Linux
+    Full support for all features:
+    - Process creation and management
+    - Memory information via \c /proc/PID/statm and \c /proc/PID/smaps_rollup (or \c smaps fallback)
+    - File descriptor counting via \c /proc/PID/fd
+    - Signal sending via kill()
+    - All executor callbacks
+    - @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" via \c /proc/PID/cmdline
+    - @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" via \c /proc/net/tcp + \c /proc/PID/fd
+    - @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" via \c /proc/net/unix + \c /proc/PID/fd
+
+    @subsection process_platforms_macos macOS / Darwin
+    Full support with some limitations:
+    - Process creation and management: fully supported
+    - Memory information: requires special permissions for other processes
+      - Reading memory of your own process works normally
+      - Reading memory of other processes requires either root privileges or
+        the \c "com.apple.system-task-ports" entitlement
+    - File descriptor counting: fully supported via \c libproc
+    - Signal sending: fully supported
+    - @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" via \c KERN_PROCARGS sysctl (returns full command line with arguments)
+    - @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" via native \c libproc APIs (only LISTEN-state TCP sockets)
+    - @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" via native \c libproc APIs
+    - @note May require elevated privileges to see other users' processes
+
+    @subsection process_platforms_bsd FreeBSD / DragonFly BSD
+    Good support:
+    - Process creation and management: fully supported
+    - @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" via kvm library
+    - @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" via \c sysctl \c KERN_PROC_FILEDESC
+    - @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" via \c sysctl \c KERN_PROC_FILEDESC
+
+    @subsection process_platforms_netbsd_openbsd NetBSD / OpenBSD
+    Partial support:
+    - Process creation and management: fully supported
+    - @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" via kvm library
+    - @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" NOT supported
+    - @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" NOT supported
+
+    @subsection process_platforms_solaris Solaris
+    Partial support:
+    - Process creation and management: fully supported
+    - Memory information: fully supported via \c libproc and \c /proc/PID/map
+    - File descriptor counting: NOT supported
+    - Signal sending: fully supported
+
+    @subsection process_platforms_windows Windows
+    Limited support (not fully implemented):
+    - Basic process creation may work
+    - Many POSIX-specific features are not available
+    - Signal sending is not supported
+
+    @section process_license Process Module License Information
+
+This module is released under the MIT license (see COPYING in the source distribution for more information)
+
+Boost parts in src/boost are distributed under the Boost Software License,
+Version 1.0. (See http://www.boost.org/LICENSE_1_0.txt)
+
+    @section process_relnotes Process Module Release History
+
+    @subsection process_v2_1 process v2.1
+    - Documentation builds use public Qore declarations with current CMake and Doxygen.
+
+    <b>New Features:</b>
+    - added @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" to get the full command
+      line of a process by PID using Boost ext::cmd; supported on Linux, macOS, FreeBSD, DragonFly, NetBSD,
+      and OpenBSD
+    - added @ref Qore::Process::Process::getSystemMemoryInfo() "Process::getSystemMemoryInfo()" to get the
+      physical and available memory of the system, including any memory limit of the current process's
+      control group on Linux or its jetsam memory limit on macOS; supported on Linux and macOS
+    - added @ref Qore::Process::Process::releaseFreeMemory() "Process::releaseFreeMemory()" to return memory
+      that has been freed by the current process to the operating system; supported with jemalloc, the GNU C
+      library allocator, and the macOS system allocator
+    - added @ref Qore::Process::Process::getExecutablePath() "Process::getExecutablePath()" to get the path to
+      the executable of a process using Boost ext::exe; supported on the same platforms as
+      @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()"
+    - added @ref Qore::Process::Process::getPidsForPort() "Process::getPidsForPort()" to find PIDs listening
+      on a TCP port; uses \c /proc/net/tcp on Linux, native \c libproc APIs on macOS, and \c sysctl
+      \c KERN_PROC_FILEDESC on FreeBSD and DragonFly BSD; only matches TCP sockets in LISTEN state
+    - added @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" to find PIDs
+      using a Unix domain socket; supported on Linux, macOS, FreeBSD, and DragonFly BSD
+    - added @ref Qore::Process::Process::closeStdin() "Process::closeStdin()" to signal EOF to child processes
+    - added @ref Qore::Process::Process::sendSignal() "Process::sendSignal()" for graceful termination via specific signals
+    - added @ref Qore::Process::Process::run() "Process::run()" convenience method to run a command and capture output
+    - added @ref Qore::Process::Process::commandExists() "Process::commandExists()" to check if a command is available
+    - added @ref Qore::Process::Process::getResourceUsage() "Process::getResourceUsage()" to get CPU time, memory, and other resource usage
+    - added @ref Qore::Process::Process::getChildPids() "Process::getChildPids()" to get child process PIDs
+    - added @ref Qore::Process::Process::terminateTree() "Process::terminateTree()" to kill a process and all its children
+    - added @ref Qore::Process::Process::pipeline() "Process::pipeline()" to chain multiple commands with pipes
+    - added @ref Qore::Process::ProcessResult "ProcessResult" hashdecl for run() return values
+    - added @ref Qore::Process::ResourceUsageInfo "ResourceUsageInfo" hashdecl for resource usage information
+    - added \c shell option to run commands through the system shell (/bin/sh -c)
+    - added \c nice option to set process priority (POSIX only)
+    - added \c limits option to set resource limits (memory, CPU time, file descriptors, etc.)
+
+    <b>Bug Fixes:</b>
+    - the filesystem restrictions of a sandbox are enforced: a program is only started if it may be executed and its
+      working directory read, searching the path only returns programs that may be read, and inspecting processes
+      and the system through \c /proc requires read access; processes that a sandbox hides are skipped when
+      processes are scanned, and long scans can be cancelled
+    - fixed leaking the output files given for a process that is not started because the call was cancelled
+    - fixed undefined behavior and a crash on Linux in
+      @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" when the command line of the
+      process is empty, as for kernel threads and for a process while it is executing a new program
+    - fixed heap corruption and crashes after a process that had already exited was waited for, most often after
+      @ref Qore::Process::Process::run() "Process::run()" terminated a process that did not finish in time: waiting
+      returned before the background I/O had finished, and destroying the process object then freed data still used
+      by the background I/O thread; output of a process that exits before it is waited for is also complete now
+    - <b>CRITICAL:</b> fixed potential kill(-1, SIGKILL) bug that could kill all user processes when
+      terminate() or sendSignal() was called on an invalid/moved-from process object
+      (boost::process v1 returns -1 for invalid PIDs, and kill(-1, sig) kills all processes)
+    - fixed a deadlock in @ref Qore::Process::Process::wait() "Process::wait()" and the destructor
+      when the child process forked grandchildren that inherited the stdout/stderr pipes
+      (e.g. <tt>cmd & wait</tt>): pending async reads now complete promptly when the immediate
+      child exits, rather than blocking until all grandchildren also close the pipe write ends
+    - fixed a memory leak in @ref Qore::Process::Process::searchPath() "Process::searchPath()" when
+      the command was not found: the pre-allocated result string was leaked when the underlying
+      lookup raised an exception
+    - added PID validation in sendSignal() and terminate() to reject PIDs <= 0
+    - added safety check in getChildPids() to reject PID 1 (init) and invalid PIDs
+    - child processes now run in their own process group (setpgid) to isolate signals
+    - child processes now start with no blocked signals and with the default action for \c SIGPIPE; they
+      inherited the signal mask of the calling Qore thread, which blocks signals, so a child without its own
+      handlers could not be stopped with \c SIGTERM, and they inherited Qore's ignored \c SIGPIPE
+    - patched boost::process v1 terminate.hpp to add pid <= 0 validation (matching v2 behavior)
+    - fixed empty code block in terminate() when handling ECHILD errors
+    - fixed getDescriptorCount() signature inconsistency on unsupported platforms
+    - fixed FILE* handle cleanup on constructor errors
+    - improved error handling when fdopen() fails for stdout/stderr redirection
+
+    <b>Safety Improvements:</b>
+    - all child processes now run in their own process group, preventing signals sent to the
+      child's process group from affecting the parent process
+    - PID validation prevents accidental operations on system processes (PID 1) or invalid PIDs
+    - getChildPids() refuses to enumerate children of PID 1 to prevent accidental system-wide operations
+
+    <b>Documentation:</b>
+    - documented the \c encoding option in process options
+    - documented the \c shell, \c nice, and \c limits options
+    - added comprehensive platform support documentation
+
+    @subsection process_v2_0 process v2.0
+    - updated to use Boost.Process v2.0
+    - removed the \c close_fds option; it's automatic with Boost.Process v2.0
+    - added Process::getDescriptorCount() to get the number of open file descriptors for a process
+
+    @subsection process_v1_1_1 process v1.1.1
+    - use <tt>/proc/PID/smaps_rollup</tt> if available to get private memory size on Linux which results in reliable
+      private memory size info as well as much faster and more efficient execution on Linux
+      (<a href="https://github.com/qorelanguage/qore/issues/4980">issue 4980</a>)
+
+    @subsection process_v1_1_0 process v1.1.0
+    - added the \c close_fds option
+
+    @subsection process_v1_0_5 process v1.0.5
+    - Updated to build with \c qpp from %Qore 1.12.4+
+
+    @subsection process_v1_0_4 process v1.0.4
+    - added missing exception handling to @ref Qore::Process::Process::constructor() "Process::constructor()" to avoid
+      a crash due to unhandled C++ exceptions due to resource errors starting processes
+      (<a href="https://github.com/qorelanguage/qore/issues/4384">issue 4384</a>)
+    - added serialization to all variants of @ref Qore::Process::Process::constructor() "Process::constructor()" and
+      @ref Qore::Process::Process::destructor() "Process::destructor()" to address race conditions in the underlying
+      \c boost::process library
+      (<a href="https://github.com/qorelanguage/qore/issues/4303">issue 4303</a> and
+      <a href="https://github.com/qorelanguage/qore/issues/4293">issue 4293</a>)
+
+    @subsection process_v1_0_3 process v1.0.3
+    - fixed a race condition with async I/O in process handled that could result in a
+      <tt>PROCESS-CONSTRUCTOR-ERROR: dup2() failed</tt> exception when starting processes
+      (<a href="https://github.com/qorelanguage/qore/issues/4303">issue 4303</a>)
+    - fixed a race condition in @ref Qore::Process::Process::wait() "Process::wait()"
+      (<a href="https://github.com/qorelanguage/qore/issues/4272">issue 4272</a>)
+
+    @subsection process_v1_0_2 process v1.0.2
+    - updated builtin boost to 1.71
+
+    @subsection process_v1_0_1 process v1.0.1
+    - fixed bugs handling retrieving process status for already-terminated processes; addressed exception handling
+      issues
+      (<a href="https://github.com/qorelanguage/qore/issues/4272">issue 4272</a>)
+
+    @subsection process_v1_0_0 process v1.0.0
+    - added:
+      - @ref Qore::Process::Process::readStdoutBinary() "Process::readStdoutBinary()"
+      - @ref Qore::Process::Process::readStderrBinary() "Process::readStderrBinary()"
+    - added support for output stream options and the \a encoding option in
+      @ref Qore::Process::Process::constructor() "Process::constructor()"; string read methods also make an effort
+      to return valid multi-byte characters now as of this release
+      (<a href="https://github.com/qorelanguage/qore/issues/4080">issue 4080</a>)
+    - @ref Qore::Process::Process::wait() "Process::wait()" will no longer throw an exception if the process has
+      already terminated
+
+    @subsection process_v0_0_2 process v0.0.2
+    - fixed error handling @ref Qore::Process::Process::readStdout() "Process::readStdout()" and
+      @ref Qore::Process::Process::readStderr() "Process::readStderr()" with negative arguments
+      (<a href="https://github.com/qorelanguage/qore/issues/2333">issue 2333</a>)
+
+    @subsection process_v0_0_1 process v0.0.1
+    - initial release of the process module
+*/

@@ -100,8 +100,11 @@ if (DEFINED ENV{DOXYGEN_EXECUTABLE})
     set(DOXYGEN_EXECUTABLE $ENV{DOXYGEN_EXECUTABLE})
 endif()
 
-# Document Qore declarations, excluding private implementation bodies.
-set(MODULE_DOX_INPUT ${QPP_DOX_SOURCES})
+# Document the main page and the Qore declarations, excluding private implementation bodies.
+set(QORE_DOX_TMPL_SRC
+    docs/mainpage.dox.tmpl
+)
+set(MODULE_DOX_INPUT ${CMAKE_BINARY_DIR}/mainpage.dox ${QPP_DOX_SOURCES})
 
 qore_external_binary_module(
     ${module_name}
