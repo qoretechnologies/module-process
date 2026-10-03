@@ -29,6 +29,9 @@
 #include <signal.h>
 #include <string.h>
 #include <sched.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 
 // std
 #include <chrono>
@@ -113,6 +116,8 @@ struct callback_initializer {
     bool setNice = false;
     int niceValue = 0;
     resource_limits limits;
+    bool killOnParentExit = false;
+    pid_t parentPid = 0;
 
     template<typename Launcher = bp::posix::default_launcher>
     DLLLOCAL void on_success(Launcher& launcher, const bp::filesystem::path& executable,
@@ -142,6 +147,18 @@ struct callback_initializer {
     template<typename Launcher = bp::posix::default_launcher>
     DLLLOCAL bp::error_code on_exec_setup(Launcher& launcher, const bp::filesystem::path& executable,
             const char* const* (&cmd_line)) {
+#ifdef __linux__
+        if (killOnParentExit) {
+            // Set before exec, and close the fork/prctl race: if the parent has already died, never run the
+            // command. This kernel binding targets this child, without a later PID lookup or tree scan.
+            if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0)) {
+                return bp::error_code(errno, boost::system::system_category());
+            }
+            if (getppid() != parentPid) {
+                _exit(127);
+            }
+        }
+#endif
         // Make this process its own process group leader to isolate it from the parent's
         // process group. This prevents signals sent to the child's process group from
         // affecting the parent and other processes in the parent's group.
@@ -372,6 +389,24 @@ ProcessPriv::ProcessPriv(const char* command, const QoreListNode* arguments, con
         }
     }
 
+    bool killOnParentExit = false;
+    if (opts && opts->existsKey("kill_on_parent_exit")) {
+        QoreValue n = opts->getKeyValue("kill_on_parent_exit");
+        if (n.getType() != NT_BOOLEAN) {
+            xsink->raiseException("PROCESS-OPTION-ERROR", "Process option 'kill_on_parent_exit' requires a 'bool' "
+                "argument; type '%s' instead", n.getTypeName());
+            return;
+        }
+        killOnParentExit = n.getAsBool();
+#ifndef __linux__
+        if (killOnParentExit) {
+            xsink->raiseException("PROCESS-OPTION-ERROR", "Process option 'kill_on_parent_exit' is not supported "
+                "on this platform");
+            return;
+        }
+#endif
+    }
+
     // Handle nice option
     int niceValue = 0;
     bool setNice = false;
@@ -501,7 +536,8 @@ ProcessPriv::ProcessPriv(const char* command, const QoreListNode* arguments, con
 
     // launch child process
     try {
-        launchChild(xsink, effectivePath, exeArgs, env, cwd.c_str(), stdoutFile, stderrFile, opts, setNice, niceValue, limits);
+        launchChild(xsink, effectivePath, exeArgs, env, cwd.c_str(), stdoutFile, stderrFile, opts, setNice, niceValue,
+            limits, killOnParentExit);
     } catch (const std::exception& ex) {
         // Clean up FILE handles on error
         if (stdoutFile) {
@@ -938,7 +974,8 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
         const QoreHashNode* opts,
         bool setNice,
         int niceValue,
-        const resource_limits& limits) {
+        const resource_limits& limits,
+        bool killOnParentExit) {
     // get handler pointers
     ReferenceHolder<ResolvedCallReferenceNode> f_on_success(optsExecutor("on_success", opts, xsink), xsink);
     if (*xsink) {
@@ -975,7 +1012,9 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
         xsink,
         setNice,
         niceValue,
-        limits
+        limits,
+        killOnParentExit,
+        getpid()
     };
 
     bp::process_environment penv = bp::process_environment(env);

@@ -204,7 +204,8 @@ private:
             const QoreHashNode* opts,
             bool setNice,
             int niceValue,
-            const resource_limits& limits);
+            const resource_limits& limits,
+            bool killOnParentExit);
 
     DLLLOCAL void finalizeStreams(ExceptionSink* xsink);
 

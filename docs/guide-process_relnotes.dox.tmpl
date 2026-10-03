@@ -4,6 +4,11 @@
 
     @tableofcontents
 
+    @section process_v2_2 process v2.2
+    - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
+      thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
+      Existing launches retain their previous behavior unless the option is enabled.
+
     @section process_v2_1 process v2.1
     - Documentation builds use public Qore declarations with current CMake and Doxygen.
 

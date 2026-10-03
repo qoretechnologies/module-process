@@ -72,6 +72,12 @@
 // getExecutablePath: supported wherever Boost ext::exe works (the same platforms as ext::cmd)
 #define HAVE_PROCESS_GETEXECUTABLEPATH HAVE_PROCESS_GETCOMMANDLINE
 
+#ifdef __linux__
+#define HAVE_PROCESS_KILL_ON_PARENT_EXIT 1
+#else
+#define HAVE_PROCESS_KILL_ON_PARENT_EXIT 0
+#endif
+
 // getSystemMemoryInfo: an implementation is required for each platform
 #if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
 #define HAVE_PROCESS_GETSYSTEMMEMORYINFO 1
@@ -130,6 +136,10 @@ const HAVE_PROCESS_GETCOMMANDLINE = bool(HAVE_PROCESS_GETCOMMANDLINE);
 /** @since process 2.1
 */
 const HAVE_PROCESS_GETEXECUTABLEPATH = bool(HAVE_PROCESS_GETEXECUTABLEPATH);
+
+//! Defines whether the \c kill_on_parent_exit process option is supported (Linux)
+/** @since process 2.2 */
+const HAVE_PROCESS_KILL_ON_PARENT_EXIT = bool(HAVE_PROCESS_KILL_ON_PARENT_EXIT);
 
 //! Defines if @ref Qore::Process::Process::getSystemMemoryInfo() "Process::getSystemMemoryInfo()" is available
 /** @since process 2.1
@@ -291,6 +301,15 @@ p.wait();
       is passed to \c "sh -c command".  Default is @ref Qore::False "False".
     - \c nice: an integer value to adjust the process priority (POSIX only).  Positive values decrease priority
       (nicer), negative values increase priority (requires root).  Range is typically -20 to 19.
+    - \c kill_on_parent_exit: a boolean, default @ref Qore::False "False". On Linux, the kernel sends
+      \c SIGKILL to the child when the thread that launched it exits, including abrupt termination of the
+      parent process. The calling thread must therefore remain alive for the child's intended lifetime.
+      The binding is established before the command runs and remains active after @ref detach(). It is not
+      inherited by grandchildren: each launch must opt in. Executing a set-user-ID, set-group-ID or
+      file-capability executable, or changing certain credentials, can clear the kernel binding; use this
+      option with ordinary executables that retain their credentials. Setting it to @ref Qore::True "True"
+      on an unsupported platform raises \c PROCESS-OPTION-ERROR. Available since process 2.2; see
+      @ref HAVE_PROCESS_KILL_ON_PARENT_EXIT.
     - \c limits: a hash of resource limits to set for the child process (POSIX only).  Supported keys:
       - \c memory: maximum virtual memory size in bytes (RLIMIT_AS)
       - \c data: maximum data segment size in bytes (RLIMIT_DATA)
