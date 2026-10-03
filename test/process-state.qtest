@@ -1,0 +1,23 @@
+#!/usr/bin/env qore
+# Copyright 2026 Qore Technologies, s.r.o.; SPDX-License-Identifier: MIT
+%modern
+%requires process
+%requires QUnit
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    constructor() : Test("Process PID state", "1.0") {
+        addTestCase("process state after successful PID lookup", \stateTest());
+        set_return_value(main());
+    }
+
+    stateTest() {
+        string scenario = ENV.PROCESS_STAT_FIXTURE ?? "native";
+        bool exited = scenario == "missing" || scenario == "removed"
+            || scenario == "removed-after-open" || scenario == "zombie"
+            || scenario == "dead" || scenario == "parentheses";
+        assertEq(!exited, Process::checkPid(getpid()), scenario);
+        assertThrows("PROCESS-CHECKPID-ERROR", \Process::checkPid(), 0);
+        assertThrows("PROCESS-CHECKPID-ERROR", \Process::checkPid(), -1);
+    }
+}

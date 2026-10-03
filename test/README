@@ -2,5 +2,14 @@ A test files for Qore::Process module.
 
 Always run process.qtest file. That's the main one.
 
-Rets of *.q files are supporting helpers to simulate IO, or ENV handling
+On Linux, run the deterministic process-state regression against the local module:
 
+    python3 -B -W error test/run-process-state.py --module build/process-api-2.0.qmod
+    python3 -B -W error test/run-process-state.py --module build-debug/process-api-2.0.qmod --valgrind
+
+The test interposer models disappearance between kill(pid, 0) and /proc inspection,
+including removal after opening the stat file. It also checks zombie/dead states,
+permission errors, an unavailable proc filesystem, malformed data and live states.
+It affects only the test process's own stat lookup and is never installed.
+
+The other *.q files are supporting helpers for I/O and environment handling.

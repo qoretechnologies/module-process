@@ -40,6 +40,8 @@
     - added \c limits option to set resource limits (memory, CPU time, file descriptors, etc.)
 
     <b>Bug Fixes:</b>
+    - process-state checks on Linux recognize dead tasks and a PID disappearing during inspection;
+      concurrent child reaping no longer makes a terminated process appear to be running
     - the filesystem restrictions of a sandbox are enforced: a program is only started if it may be executed and its
       working directory read, searching the path only returns programs that may be read, and inspecting processes
       and the system through \c /proc requires read access; processes that a sandbox hides are skipped when
