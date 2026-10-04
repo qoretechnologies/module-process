@@ -44,13 +44,13 @@ Source and binary builds
 ------------------------
 
 Use a fresh version for every changed upload. This snapshot version sorts before
-the eventual 2.1.0 release. From a clean committed checkout, export the sources
+the eventual 2.2.0 release. From a clean committed checkout, export the sources
 without debian/, repack using debian/copyright's Files-Excluded list (for example
 with mk-origtargz --repack --repack-suffix +ds), and name the original archive:
 
-    qore-process-module_2.1.0~git20260928.1+ds.orig.tar.xz
+    qore-process-module_2.2.0~git20261004.1+ds.orig.tar.xz
 
-Extract it into qore-process-module-2.1.0~git20260928.1+ds, copy debian/ there,
+Extract it into qore-process-module-2.2.0~git20261004.1+ds, copy debian/ there,
 and create the source package with dpkg-buildpackage -S -us -uc. Extract the .dsc
 with dpkg-source -x in a clean build directory. With dependencies preinstalled,
 build as an unprivileged user with networking disabled:

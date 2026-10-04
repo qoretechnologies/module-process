@@ -1,3 +1,9 @@
+qore-process-module (2.2.0~git20261004.1+ds-0qore1~ubuntu26.04) resolute; urgency=medium
+
+  * Align the package version with the 2.2.0 module and release notes.
+
+ -- David Nichols <david@qore.org>  Sun, 04 Oct 2026 12:00:00 +0000
+
 qore-process-module (2.1.0~git20260928.1+ds-0qore1~ubuntu26.04) resolute; urgency=medium
 
   * Package the native module, compiler metadata, docs and debug symbols.

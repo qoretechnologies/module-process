@@ -16,7 +16,7 @@
 %bcond_with system_boost
 %endif
 Name: qore-process-module
-Version: 2.1.0
+Version: 2.2.0
 Release: 1%{?dist}
 Summary: Child process control and system process information for Qore
 License: MIT AND BSL-1.0
@@ -111,5 +111,8 @@ python3 -B -W error test/run-process-state.py \
 %doc %{_docdir}/%{name}-doc/
 %endif
 %changelog
+* Sun Oct 04 2026 David Nichols <david@qore.org> - 2.2.0-1
+- Align the package version with the module release.
+
 * Thu Oct 01 2026 David Nichols <david@qore.org> - 2.1.0-1
 - Package process control, metadata, documentation and the complete local suite.

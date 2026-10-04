@@ -13,7 +13,7 @@ Prepare a pinned source bundle with qore-packaging, then build it in the target
 distribution with networking disabled::
 
     python3 tools/packaging.py prepare --repo ../module-process --ref COMMIT \
-      --name qore-process-module --version 2.1.0 \
+      --name qore-process-module --version 2.2.0 \
       --spec qore-process-module.spec --output work/process-source
     python3 tools/build-local.py --source work/process-source \
       --image TARGET_SDK_IMAGE --output results/process-build --jobs 2
