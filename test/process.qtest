@@ -129,6 +129,7 @@ public class Main inherits QUnit::Test {
         addTestCase("getPidsForPort test", \getPidsForPortTest());
         addTestCase("getPidsForUnixSocket test", \getPidsForUnixSocketTest());
         addTestCase("a child starts with the default signal state", \childSignalStateTest());
+        addTestCase("a timed read ends with the output", \timedReadEndsWithOutputTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -942,6 +943,65 @@ public class Main inherits QUnit::Test {
 
         assertEq("stdout", stdoutFile.readLine());
         assertEq("stderr", stderrFile.readLine());
+    }
+
+    timedReadEndsWithOutputTest() {
+        # the timeout is long, so that a read that waits for it is told apart from one that returns when the output
+        # ends, which takes a small fraction of it
+        timeout long_wait = 20s;
+        int max_ms = 10000;
+
+        # the child has written all of its output and exited: each read method returns NOTHING at once
+        {
+            Process p("sh", ("-c", "printf out; printf err >&2"));
+            p.wait();
+            assertEq("out", p.readStdout(100, long_wait));
+            assertEq("err", p.readStderr(100, long_wait));
+            hash<string, code> reads = {
+                "readStdout": auto sub () { return p.readStdout(100, long_wait); },
+                "readStderr": auto sub () { return p.readStderr(100, long_wait); },
+                "readStdoutBinary": auto sub () { return p.readStdoutBinary(100, long_wait); },
+                "readStderrBinary": auto sub () { return p.readStderrBinary(100, long_wait); },
+            };
+            foreach hash<auto> i in (reads.pairIterator()) {
+                int start = clock_get_monotonic_us();
+                assertNothing(i.value(), i.key);
+                int ms = (clock_get_monotonic_us() - start) / 1000;
+                assertTrue(ms < max_ms, sprintf("%s returned after %d ms", i.key, ms));
+            }
+        }
+
+        # the child has closed its standard output but still runs: a read returns when the output ends
+        {
+            Process p("sh", ("-c", "printf out; exec 1>&-; read x"));
+            assertEq("out", p.readStdout(100, long_wait));
+            int start = clock_get_monotonic_us();
+            assertNothing(p.readStdout(100, long_wait));
+            int ms = (clock_get_monotonic_us() - start) / 1000;
+            assertTrue(ms < max_ms, sprintf("readStdout returned after %d ms", ms));
+            # the child waits for a line on its standard input
+            assertTrue(p.running());
+            p.write("\n");
+            p.closeStdin();
+            p.wait();
+        }
+
+        # standard output redirected to a file is never read
+        {
+            string path = tmp_location() + DirSep + get_random_string();
+            File f();
+            f.open2(path, O_WRONLY | O_TRUNC | O_CREAT);
+            on_exit try {
+                unlink(path);
+            } catch () {}
+            Process p("sh", ("-c", "printf out"), {"stdout": f});
+            f.close();
+            int start = clock_get_monotonic_us();
+            assertNothing(p.readStdout(100, long_wait));
+            int ms = (clock_get_monotonic_us() - start) / 1000;
+            assertTrue(ms < max_ms, sprintf("readStdout returned after %d ms", ms));
+            p.wait();
+        }
     }
 
     outputRedirectNegativeTest() {

@@ -327,6 +327,9 @@ ProcessPriv::ProcessPriv(pid_t pid, ExceptionSink* xsink) :
 #endif
         //printd(5, "ProcessPriv::ProcessPriv(pid: %d)\n", pid);
         m_process = new bp::process(m_asio_ctx.get_executor(), (boost::process::v2::pid_type)pid);
+        // the output of a process that was not started here is not read
+        m_out_buf.setEnded();
+        m_err_buf.setEnded();
     } catch (const std::exception& ex) {
         xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", ex.what());
     }
@@ -902,10 +905,13 @@ void ProcessPriv::prepareClosures() {
         // append read data to output buffer
         m_out_buf.append(m_out_vec.data(), n);
 
-        // continue reading if no error
+        // continue reading if no error; otherwise the output has ended (end of file, or the read was cancelled
+        // because the child exited), and readers waiting for data return
         if (!ec) {
             boost::asio::async_read(m_out_pipe, m_out_asiobuf, boost::asio::transfer_at_least(1),
                 m_on_stdout_complete);
+        } else {
+            m_out_buf.setEnded();
         }
     };
 
@@ -914,10 +920,13 @@ void ProcessPriv::prepareClosures() {
         // append read data to output buffer
         m_err_buf.append(m_err_vec.data(), n);
 
-        // continue reading if no error
+        // continue reading if no error; otherwise the output has ended (end of file, or the read was cancelled
+        // because the child exited), and readers waiting for data return
         if (!ec) {
             boost::asio::async_read(m_err_pipe, m_err_asiobuf, boost::asio::transfer_at_least(1),
                 m_on_stderr_complete);
+        } else {
+            m_err_buf.setEnded();
         }
     };
 
@@ -1057,14 +1066,18 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
         running_flag = true;
     }
 
-    // create async read operations
+    // create async read operations; output redirected to a file is never read into the buffer
     if (!stdoutFile) {
         boost::asio::async_read(m_out_pipe, m_out_asiobuf, boost::asio::transfer_at_least(1),
             m_on_stdout_complete);
+    } else {
+        m_out_buf.setEnded();
     }
     if (!stderrFile) {
         boost::asio::async_read(m_err_pipe, m_err_asiobuf, boost::asio::transfer_at_least(1),
             m_on_stderr_complete);
+    } else {
+        m_err_buf.setEnded();
     }
 
     // increment counter before launching thread

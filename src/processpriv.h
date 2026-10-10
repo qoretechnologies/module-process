@@ -423,11 +423,11 @@ private:
             auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(millis);
             std::unique_lock<std::mutex> lock(m_mtx);
 
-            // wait if there is no data
+            // wait if there is no data, until data arrives, the output ends, or the timeout expires
             if (m_buf.size() == 0) {
-                m_timeout_sync.wait_until(lock, until, [this]{ return m_buf.size() > 0; });
+                m_timeout_sync.wait_until(lock, until, [this]{ return m_buf.size() > 0 || m_ended; });
 
-                // return if there is still no data after timeout
+                // return if there is still no data: the timeout expired, or the output has ended
                 if (m_buf.size() == 0)
                     return 0;
             }
@@ -446,11 +446,11 @@ private:
             auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(millis);
             std::unique_lock<std::mutex> lock(m_mtx);
 
-            // wait if there is no data
+            // wait if there is no data, until data arrives, the output ends, or the timeout expires
             if (m_buf.size() == 0) {
-                m_timeout_sync.wait_until(lock, until, [this]{ return m_buf.size() > 0; });
+                m_timeout_sync.wait_until(lock, until, [this]{ return m_buf.size() > 0 || m_ended; });
 
-                // return if there is still no data after timeout
+                // return if there is still no data: the timeout expired, or the output has ended
                 if (m_buf.size() == 0)
                     return 0;
             }
@@ -469,16 +469,28 @@ private:
             auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(millis);
             std::unique_lock<std::mutex> lock(m_mtx);
 
-            // wait if there is no data
+            // wait if there is no data, until data arrives, the output ends, or the timeout expires
             if (m_buf.size() == 0) {
-                m_timeout_sync.wait_until(lock, until, [this]{ return m_buf.size() > 0; });
+                m_timeout_sync.wait_until(lock, until, [this]{ return m_buf.size() > 0 || m_ended; });
 
-                // return if there is still no data after timeout
+                // return if there is still no data: the timeout expired, or the output has ended
                 if (m_buf.size() == 0)
                     return 0;
             }
 
             return doRead(dest, n);
+        }
+
+        //! Marks the end of the output: no more data will be appended, and readers waiting for data return
+        /** Called when the output stream reaches its end or is no longer read (ex: the child exited), and for output
+            that is never read into the buffer (redirected to a file, or a process that was not started here)
+        */
+        DLLLOCAL void setEnded() {
+            {
+                std::lock_guard<std::mutex> lock(m_mtx);
+                m_ended = true;
+            }
+            m_timeout_sync.notify_all();
         }
 
         //! Append data to the buffer.
@@ -501,6 +513,8 @@ private:
         std::mutex m_mtx;
         std::condition_variable m_timeout_sync;
         std::string m_buf;
+        //! True when no more data will be appended
+        bool m_ended = false;
 
         ExceptionSink* bg_xsink;
         PrivateDataRefHolder<OutputStream> stream;

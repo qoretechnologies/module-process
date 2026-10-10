@@ -5,6 +5,10 @@
     @tableofcontents
 
     @section process_v2_2 process v2.2
+    - A read of the child's output with a timeout (@ref Qore::Process::Process::readStdout() "readStdout()",
+      @ref Qore::Process::Process::readStderr() "readStderr()" and their binary variants) returns as soon as the
+      output has ended (the child closed it or exited, or the output is redirected to a file); previously it waited
+      for the whole timeout when no more data could arrive.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.
