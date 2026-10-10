@@ -3651,16 +3651,38 @@ bool ProcessPriv::releaseFreeMemory() {
     typedef int (*mallctl_t)(const char* name, void* oldp, size_t* oldlenp, void* newp, size_t newlen);
     static mallctl_t mallctl_func = reinterpret_cast<mallctl_t>(dlsym(RTLD_DEFAULT, "mallctl"));
     if (mallctl_func) {
+        // the bytes of resident pages mapped by the allocator, from freshly refreshed statistics; false if jemalloc
+        // was built without statistics
+        auto resident = [](mallctl_t mallctl, size_t& bytes) -> bool {
+            uint64_t epoch = 1;
+            size_t len = sizeof(epoch);
+            if (mallctl("epoch", &epoch, &len, &epoch, len)) {
+                return false;
+            }
+            len = sizeof(bytes);
+            return !mallctl("stats.resident", &bytes, &len, nullptr, 0);
+        };
+        size_t before = 0;
+        bool have_stats = resident(mallctl_func, before);
         // 4096 is MALLCTL_ARENAS_ALL: purge the unused pages of every arena
-        return !mallctl_func("arena.4096.purge", nullptr, nullptr, nullptr, 0);
+        if (mallctl_func("arena.4096.purge", nullptr, nullptr, nullptr, 0)) {
+            return false;
+        }
+        size_t after = 0;
+        if (have_stats && resident(mallctl_func, after)) {
+            return after < before;
+        }
+        // without statistics, the purge cannot tell how much it released
+        return true;
     }
 #endif
 #if defined(__GLIBC__)
-    malloc_trim(0);
-    return true;
+    // returns 1 if memory was returned to the system
+    return malloc_trim(0) == 1;
 #elif defined(__APPLE__) && defined(__MACH__)
-    malloc_zone_pressure_relief(nullptr, 0);
-    return true;
+    // returns the number of bytes released; the system allocator returns freed memory to the system on its own
+    // schedule, so there can be nothing left to release
+    return malloc_zone_pressure_relief(nullptr, 0) > 0;
 #else
     return false;
 #endif

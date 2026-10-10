@@ -1557,13 +1557,18 @@ buildCache();
 Process::releaseFreeMemory();
     @endcode
 
-    @return @ref Qore::True "True" if the allocator of the current process supports returning free memory to the
-    operating system and was asked to do so, @ref Qore::False "False" if not
+    @return @ref Qore::True "True" if memory was returned to the operating system, @ref Qore::False "False" if
+    not: there was no free memory to return, or the allocator of the current process does not support returning
+    it
 
     @note
     - Supported with the jemalloc allocator on any platform (including the one linked into %Qore on musl-based
       Linux systems and the FreeBSD system allocator), with the GNU C library allocator on Linux, and with the
       system allocator on macOS
+    - With jemalloc, the result compares the allocator's resident memory before and after its unused pages are
+      purged; if jemalloc was built without statistics, @ref Qore::True "True" means that the pages were purged
+    - The macOS system allocator returns freed memory to the operating system on its own schedule, so this method
+      can return @ref Qore::False "False" there even after a large amount of memory has been freed
     - This method can take some time with a large heap, since the allocator has to scan its free memory; call it
       after an operation that has freed a large amount of memory, not frequently
 
