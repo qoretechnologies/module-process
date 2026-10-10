@@ -709,15 +709,15 @@ nothing Process::closeStdin() {
 }
 
 //! Read from child process's standard output.
-/** Reads data from child process's standard output. If no timeout is given, or
-    timeout is 0 or negative, the method reads all data that is currently available
-    up to the count passed in \c bytes parameter and then returns immediately.
-    If no data is available, it will return NOTHING.
+/** Reads data from child process's standard output, which is buffered as the child writes it.
 
-    If positive timeout value is passed, then the method reads all data that is
-    currently available up to the count passed in \c bytes parameter and then
-    returns immediately. If no data is available, it will sleep until timeout
-    and then try to read. If there is still no data, it will return.
+    If \c timeout is 0 or negative, the method returns at once: with the buffered data, up to \c bytes bytes, or
+    with NOTHING if there is none.
+
+    If \c timeout is positive, the method returns the buffered data at once, up to \c bytes bytes; if there is
+    none, it waits for the child to write data and returns as soon as data arrives, or returns NOTHING when the
+    timeout expires.  The wait does not end when the child closes its standard output or exits, so a read after
+    the child has written all of its output waits for the whole timeout.
 
     This method does not guarantee that any data will be read or that \c bytes
     count of bytes will be read.
@@ -752,15 +752,15 @@ nothing Process::closeStdin() {
 }
 
 //! Read from child process's standard error output.
-/** Reads data from child process's standard error output. If no timeout is given,
-    or timeout is 0 or negative, the method reads all data that is currently
-    available up to the count passed in \c bytes parameter and then returns immediately.
-    If no data is available, it will return NOTHING.
+/** Reads data from child process's standard error output, which is buffered as the child writes it.
 
-    If positive timeout value is passed, then the method reads all data that is
-    currently available up to the count passed in \c bytes parameter and then
-    returns immediately. If no data is available, it will sleep until timeout
-    and then try to read. If there is still no data, it will return.
+    If \c timeout is 0 or negative, the method returns at once: with the buffered data, up to \c bytes bytes, or
+    with NOTHING if there is none.
+
+    If \c timeout is positive, the method returns the buffered data at once, up to \c bytes bytes; if there is
+    none, it waits for the child to write data and returns as soon as data arrives, or returns NOTHING when the
+    timeout expires.  The wait does not end when the child closes its standard error output or exits, so a read
+    after the child has written all of its output waits for the whole timeout.
 
     This method does not guarantee that any data will be read or that \c bytes
     count of bytes will be read.
@@ -795,15 +795,15 @@ nothing Process::closeStdin() {
 }
 
 //! Read from child process's standard output and return a binary value.
-/** Reads data from child process's standard output. If no timeout is given, or
-    timeout is 0 or negative, the method reads all data that is currently available
-    up to the count passed in \c bytes parameter and then returns immediately.
-    If no data is available, it will return NOTHING.
+/** Reads data from child process's standard output, which is buffered as the child writes it.
 
-    If positive timeout value is passed, then the method reads all data that is
-    currently available up to the count passed in \c bytes parameter and then
-    returns immediately. If no data is available, it will sleep until timeout
-    and then try to read. If there is still no data, it will return.
+    If \c timeout is 0 or negative, the method returns at once: with the buffered data, up to \c bytes bytes, or
+    with NOTHING if there is none.
+
+    If \c timeout is positive, the method returns the buffered data at once, up to \c bytes bytes; if there is
+    none, it waits for the child to write data and returns as soon as data arrives, or returns NOTHING when the
+    timeout expires.  The wait does not end when the child closes its standard output or exits, so a read after
+    the child has written all of its output waits for the whole timeout.
 
     This method does not guarantee that any data will be read or that \c bytes count of bytes will be read.
 
@@ -831,15 +831,15 @@ nothing Process::closeStdin() {
 }
 
 //! Read from child process's standard error output and return a binary value.
-/** Reads data from child process's standard error output. If no timeout is given,
-    or timeout is 0 or negative, the method reads all data that is currently
-    available up to the count passed in \c bytes parameter and then returns immediately.
-    If no data is available, it will return NOTHING.
+/** Reads data from child process's standard error output, which is buffered as the child writes it.
 
-    If positive timeout value is passed, then the method reads all data that is
-    currently available up to the count passed in \c bytes parameter and then
-    returns immediately. If no data is available, it will sleep until timeout
-    and then try to read. If there is still no data, it will return.
+    If \c timeout is 0 or negative, the method returns at once: with the buffered data, up to \c bytes bytes, or
+    with NOTHING if there is none.
+
+    If \c timeout is positive, the method returns the buffered data at once, up to \c bytes bytes; if there is
+    none, it waits for the child to write data and returns as soon as data arrives, or returns NOTHING when the
+    timeout expires.  The wait does not end when the child closes its standard error output or exits, so a read
+    after the child has written all of its output waits for the whole timeout.
 
     This method does not guarantee that any data will be read or that \c bytes
     count of bytes will be read.
