@@ -9,6 +9,10 @@
       @ref Qore::Process::Process::readStderr() "readStderr()" and their binary variants) returns as soon as the
       output has ended (the child closed it or exited, or the output is redirected to a file); previously it waited
       for the whole timeout when no more data could arrive.
+    - A wait with a timeout (@ref Qore::Process::Process::wait() "wait()") on a detached process, or on a process
+      attached by its PID, returns when the process ends or the timeout expires; previously it returned at once, as
+      if the process had ended, while the process still ran.  A wait without a timeout on a process attached by its
+      PID returns when the process ends; previously it also returned at once.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.

@@ -641,6 +641,19 @@ private:
 
     //! Detached flag
     int detached_pid = 0;
+
+    //! True if the object was created from a PID; the background handler does not report the end of such a process
+    bool from_pid = false;
+
+    //! Polls until the process ends or the timeout expires
+    /** The background handler reports only the end of a process started by this object and not detached; the end of
+        a detached process, or of one this object was created from by its PID, can only be polled.
+
+        @param ms the timeout in milliseconds; a negative value polls until the process ends
+
+        @return true if the process ended; false if the timeout expired, or if an exception was raised
+    */
+    DLLLOCAL bool pollForEnd(int64 ms, ExceptionSink* xsink);
 };
 
 #endif

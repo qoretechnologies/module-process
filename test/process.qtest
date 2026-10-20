@@ -130,6 +130,7 @@ public class Main inherits QUnit::Test {
         addTestCase("getPidsForUnixSocket test", \getPidsForUnixSocketTest());
         addTestCase("a child starts with the default signal state", \childSignalStateTest());
         addTestCase("a timed read ends with the output", \timedReadEndsWithOutputTest());
+        addTestCase("a wait returns when a detached or attached process ends", \waitUnwatchedProcessTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -943,6 +944,50 @@ public class Main inherits QUnit::Test {
 
         assertEq("stdout", stdoutFile.readLine());
         assertEq("stderr", stderrFile.readLine());
+    }
+
+    waitUnwatchedProcessTest() {
+        # the end of a detached process and of one attached by its PID is not reported by the background handler; a
+        # wait returned at once, as if the process had ended, while it still ran
+        int short_ms = 300;
+        int max_ms = 10000;
+
+        # a detached child
+        {
+            Process p("sh", ("-c", "sleep 3"));
+            p.detach();
+            int start = clock_get_monotonic_us();
+            assertFalse(p.wait(short_ms), "a timed wait on a running detached process");
+            int ms = (clock_get_monotonic_us() - start) / 1000;
+            assertTrue(ms >= short_ms - 10, sprintf("the timed wait returned after %d ms", ms));
+            assertTrue(p.running(), "the detached process still runs");
+            start = clock_get_monotonic_us();
+            assertTrue(p.wait(max_ms), "a timed wait on a detached process that ends");
+            ms = (clock_get_monotonic_us() - start) / 1000;
+            assertTrue(ms < max_ms - 1000, sprintf("the timed wait returned after %d ms", ms));
+            assertFalse(p.running(), "the detached process has ended");
+            assertEq(0, p.exitCode(), "the exit code of the detached process");
+        }
+
+        # a process attached by its PID that is not a child of this process: the shell exits at once, and its child
+        # is reparented
+        {
+            Process sh("sh", ("-c", "sleep 3 >/dev/null 2>&1 & echo $!"));
+            sh.wait();
+            int pid = sh.readStdout(100).toInt();
+            assertTrue(Process::checkPid(pid), "the reparented process runs");
+            Process p(pid);
+            int start = clock_get_monotonic_us();
+            assertFalse(p.wait(short_ms), "a timed wait on a running process attached by its PID");
+            int ms = (clock_get_monotonic_us() - start) / 1000;
+            assertTrue(ms >= short_ms - 10, sprintf("the timed wait returned after %d ms", ms));
+            assertTrue(p.running(), "the attached process still runs");
+            start = clock_get_monotonic_us();
+            assertTrue(p.wait(), "a wait on a process attached by its PID");
+            ms = (clock_get_monotonic_us() - start) / 1000;
+            assertTrue(ms >= 1000 && ms < max_ms, sprintf("the wait returned after %d ms", ms));
+            assertFalse(Process::checkPid(pid), "the attached process has ended");
+        }
     }
 
     timedReadEndsWithOutputTest() {

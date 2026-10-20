@@ -47,6 +47,9 @@
 // module
 #include "unix-config.h"
 
+//! The interval in microseconds between checks of a process whose end is polled
+#define WAIT_END_POLL_US 10000
+
 DLLLOCAL extern const TypedHashDecl* hashdeclMemorySummaryInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclSystemMemoryInfo;
 
@@ -327,6 +330,7 @@ ProcessPriv::ProcessPriv(pid_t pid, ExceptionSink* xsink) :
 #endif
         //printd(5, "ProcessPriv::ProcessPriv(pid: %d)\n", pid);
         m_process = new bp::process(m_asio_ctx.get_executor(), (boost::process::v2::pid_type)pid);
+        from_pid = true;
         // the output of a process that was not started here is not read
         m_out_buf.setEnded();
         m_err_buf.setEnded();
@@ -1335,8 +1339,13 @@ bool ProcessPriv::wait(ExceptionSink* xsink) {
             return false;
         }
 
-        // wait on detached process
-        if (detached_pid) {
+        if (from_pid) {
+            // the process may not be a child of this process, so its end is polled
+            if (!pollForEnd(-1, xsink)) {
+                return false;
+            }
+        } else if (detached_pid) {
+            // wait on detached process
             int wstatus;
             while (true) {
                 if (waitpid(detached_pid, &wstatus, 0) == -1) {
@@ -1404,6 +1413,17 @@ bool ProcessPriv::wait(int64 t, ExceptionSink* xsink) {
         }
     }
 
+    // the background handler does not report the end of a detached process or of one created from a PID, so
+    // without polling, the wait would return at once as if the process had ended
+    if (detached_pid || from_pid) {
+        if (!pollForEnd(t < 0 ? 0 : t, xsink)) {
+            return false;
+        }
+        // rethrows any background exceptions
+        finalizeStreams(xsink);
+        return true;
+    }
+
     try {
         std::unique_lock<std::mutex> lock(mtx_process_status);
         if (running_flag) {
@@ -1429,6 +1449,38 @@ bool ProcessPriv::wait(int64 t, ExceptionSink* xsink) {
     }
 
     return false;
+}
+
+bool ProcessPriv::pollForEnd(int64 ms, ExceptionSink* xsink) {
+    std::chrono::steady_clock::time_point deadline;
+    if (ms >= 0) {
+        deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    }
+    while (true) {
+        bool rc = running(xsink);
+        if (*xsink) {
+            return false;
+        }
+        if (!rc) {
+            return true;
+        }
+        if (qore_check_cancel(xsink, "Process::wait")) {
+            return false;
+        }
+        std::chrono::microseconds interval(WAIT_END_POLL_US);
+        if (ms >= 0) {
+            std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+            if (now >= deadline) {
+                return false;
+            }
+            std::chrono::microseconds remaining =
+                std::chrono::duration_cast<std::chrono::microseconds>(deadline - now);
+            if (remaining < interval) {
+                interval = remaining;
+            }
+        }
+        usleep(interval.count());
+    }
 }
 
 bool ProcessPriv::detach(ExceptionSink* xsink) {
