@@ -29,14 +29,17 @@
 #include <signal.h>
 #include <string.h>
 #include <sched.h>
+#include <poll.h>
 #ifdef __linux__
 #include <sys/prctl.h>
+#include <sys/syscall.h>
 #endif
 
 // std
 #include <chrono>
 #include <exception>
 #include <cctype>
+#include <climits>
 #include <stdexcept>
 
 // boost
@@ -46,6 +49,13 @@
 
 // module
 #include "unix-config.h"
+
+//! Closes a descriptor that a child process was launched with, if any
+static void close_output_fd(int fd) {
+    if (fd != -1) {
+        ::close(fd);
+    }
+}
 
 //! The interval in microseconds between checks of a process whose end is polled
 #define WAIT_END_POLL_US 10000
@@ -329,6 +339,8 @@ ProcessPriv::ProcessPriv(pid_t pid, ExceptionSink* xsink) :
         }
 #endif
         //printd(5, "ProcessPriv::ProcessPriv(pid: %d)\n", pid);
+        // the descriptor is opened before the process is attached, so it can only refer to the process given
+        openEndFd(pid);
         m_process = new bp::process(m_asio_ctx.get_executor(), (boost::process::v2::pid_type)pid);
         from_pid = true;
         // the output of a process that was not started here is not read
@@ -473,32 +485,14 @@ ProcessPriv::ProcessPriv(const char* command, const QoreListNode* arguments, con
     // not yet supported; not possible to read from an input stream with a timeout or to read all data available
     //optsStdin(opts, xsink);
 
+    // duplicates of the descriptors of the File objects given; they are closed when the constructor returns, since
+    // the child has its own copies once it has been launched
     int stdoutFD = optsStdout("stdout", opts, xsink);
+    ON_BLOCK_EXIT(close_output_fd, stdoutFD);
     int stderrFD = optsStdout("stderr", opts, xsink);
+    ON_BLOCK_EXIT(close_output_fd, stderrFD);
     if (xsink->isException()) {
         return;
-    }
-
-    FILE* stdoutFile = nullptr;
-    FILE* stderrFile = nullptr;
-    if (stdoutFD != -1) {
-        stdoutFile = fdopen(stdoutFD, "w");
-        if (!stdoutFile) {
-            close(stdoutFD);
-            xsink->raiseErrnoException("PROCESS-CONSTRUCTOR-ERROR", errno, "failed to create stdout FILE stream");
-            return;
-        }
-    }
-    if (stderrFD != -1) {
-        stderrFile = fdopen(stderrFD, "w");
-        if (!stderrFile) {
-            if (stdoutFile) {
-                fclose(stdoutFile);
-            }
-            close(stderrFD);
-            xsink->raiseErrnoException("PROCESS-CONSTRUCTOR-ERROR", errno, "failed to create stderr FILE stream");
-            return;
-        }
     }
 
     // process exe arguments
@@ -529,12 +523,6 @@ ProcessPriv::ProcessPriv(const char* command, const QoreListNode* arguments, con
     if (check_sandbox_access(effectivePath.string().c_str(), QSEC_EXECUTE, xsink)
             || (opts && opts->existsKey("cwd") && check_sandbox_read(cwd.c_str(), xsink))
             || qore_check_cancel(xsink, "Process::constructor")) {
-        if (stdoutFile) {
-            fclose(stdoutFile);
-        }
-        if (stderrFile) {
-            fclose(stderrFile);
-        }
         return;
     }
 
@@ -543,30 +531,14 @@ ProcessPriv::ProcessPriv(const char* command, const QoreListNode* arguments, con
 
     // launch child process
     try {
-        launchChild(xsink, effectivePath, exeArgs, env, cwd.c_str(), stdoutFile, stderrFile, opts, setNice, niceValue,
+        launchChild(xsink, effectivePath, exeArgs, env, cwd.c_str(), stdoutFD, stderrFD, opts, setNice, niceValue,
             limits, killOnParentExit);
     } catch (const std::exception& ex) {
-        // Clean up FILE handles on error
-        if (stdoutFile) {
-            fclose(stdoutFile);
-            stdoutFile = nullptr;
-        }
-        if (stderrFile) {
-            fclose(stderrFile);
-            stderrFile = nullptr;
-        }
         xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", ex.what());
     }
 
     // stop async I/O thread immediately before obliteration if an exception was thrown
     if (*xsink) {
-        // Clean up FILE handles on error from launchChild (if not already closed)
-        if (stdoutFile) {
-            fclose(stdoutFile);
-        }
-        if (stderrFile) {
-            fclose(stderrFile);
-        }
         finalizeStreams(xsink);
     }
 }
@@ -582,6 +554,9 @@ ProcessPriv::~ProcessPriv() {
     }
     // in case the object is obliterated (exception in constructor), the destructor is not run
     delete m_process;
+    if (end_fd != -1) {
+        ::close(end_fd);
+    }
     assert(!bg_xsink);
 }
 
@@ -778,7 +753,15 @@ int ProcessPriv::optsStdout(const char* keyName, const QoreHashNode* opts, Excep
             );
             return -1;
         }
-        ret = file->detachFd();
+        // the child writes to a duplicate of the File's descriptor, so the File stays open and owned by the caller,
+        // and one File can be given for both stdout and stderr; the duplicate is numbered above the standard
+        // descriptors and closed on exec, so that only the child launched with it gets it
+        ret = fcntl(file->getFD(), F_DUPFD_CLOEXEC, 3);
+        if (ret == -1) {
+            xsink->raiseErrnoException("PROCESS-OPTION-ERROR", errno, "cannot use the File object given with "
+                "Process constructor option '%s'", keyName);
+            return -1;
+        }
     }
 
     return ret;
@@ -982,8 +965,8 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
         std::vector<std::string>& args,
         env_t env,
         const char* cwd,
-        FILE* stdoutFile,
-        FILE* stderrFile,
+        int stdoutFd,
+        int stderrFd,
         const QoreHashNode* opts,
         bool setNice,
         int niceValue,
@@ -1032,21 +1015,21 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
 
     bp::process_environment penv = bp::process_environment(env);
 
-    if (stdoutFile && stderrFile) {
+    if (stdoutFd != -1 && stderrFd != -1) {
         m_process = new bp::process(m_asio_ctx, p.string(), args, cbi,
-            bp::process_stdio{m_in_pipe, stdoutFile, stderrFile},
+            bp::process_stdio{m_in_pipe, stdoutFd, stderrFd},
             bp::process_start_dir(cwd),
             penv
         );
-    } else if (stdoutFile) {
+    } else if (stdoutFd != -1) {
         m_process = new bp::process(m_asio_ctx, p.string(), args, cbi,
-            bp::process_stdio{m_in_pipe, stdoutFile, m_err_pipe},
+            bp::process_stdio{m_in_pipe, stdoutFd, m_err_pipe},
             bp::process_start_dir(cwd),
             penv
         );
-    } else if (stderrFile) {
+    } else if (stderrFd != -1) {
         m_process = new bp::process(m_asio_ctx, p.string(), args, cbi,
-            bp::process_stdio{m_in_pipe, m_out_pipe, stderrFile},
+            bp::process_stdio{m_in_pipe, m_out_pipe, stderrFd},
             bp::process_start_dir(cwd),
             penv
         );
@@ -1071,13 +1054,13 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
     }
 
     // create async read operations; output redirected to a file is never read into the buffer
-    if (!stdoutFile) {
+    if (stdoutFd == -1) {
         boost::asio::async_read(m_out_pipe, m_out_asiobuf, boost::asio::transfer_at_least(1),
             m_on_stdout_complete);
     } else {
         m_out_buf.setEnded();
     }
-    if (!stderrFile) {
+    if (stderrFd == -1) {
         boost::asio::async_read(m_err_pipe, m_err_asiobuf, boost::asio::transfer_at_least(1),
             m_on_stderr_complete);
     } else {
@@ -1201,11 +1184,13 @@ bool ProcessPriv::running(ExceptionSink* xsink) {
                     // interrupted by a signal, try again
                     continue;
                 }
-                // if waitpid() returns -1 with errno == ECHILD, then the process has already exited
-                if (errno != ECHILD) {
-                    xsink->raiseException("PROCESS-RUNNING-ERROR", "Cannot check detached process with PID %d: %s",
-                        detached_pid, strerror(errno));
+                // ECHILD: the process is not a child of this process (it was attached by its PID), or it has
+                // already been reaped
+                if (errno == ECHILD) {
+                    return checkPid(detached_pid, xsink);
                 }
+                xsink->raiseException("PROCESS-RUNNING-ERROR", "Cannot check detached process with PID %d: %s",
+                    detached_pid, strerror(errno));
                 return false;
             } else if (!res) {
                 return true;
@@ -1217,7 +1202,8 @@ bool ProcessPriv::running(ExceptionSink* xsink) {
             return true;
         }
         //printd(5, "ProcessPriv::running() detached PID %d is not running; exit code: %d\n", detached_pid, code);
-        exit_code = WEXITSTATUS(code);
+        // evaluated as for a process that is not detached: the exit status, or the signal that ended it
+        exit_code = bp::evaluate_exit_code(code);
 
         return false;
     }
@@ -1339,34 +1325,10 @@ bool ProcessPriv::wait(ExceptionSink* xsink) {
             return false;
         }
 
-        if (from_pid) {
-            // the process may not be a child of this process, so its end is polled
-            if (!pollForEnd(-1, xsink)) {
+        if (from_pid || detached_pid) {
+            // the background handler does not report the end of the process
+            if (!waitForEnd(-1, xsink)) {
                 return false;
-            }
-        } else if (detached_pid) {
-            // wait on detached process
-            int wstatus;
-            while (true) {
-                if (waitpid(detached_pid, &wstatus, 0) == -1) {
-                    if (errno == ECHILD) {
-                        return false;
-                    }
-                    if (errno == EINTR) {
-                        continue;
-                    }
-                    xsink->raiseException("PROCESS-WAIT-ERROR", "Cannot get exit code for detached process with "
-                        "PID %d: %s", detached_pid, strerror(errno));
-                    return false;
-                }
-                break;
-            }
-            std::unique_lock<std::mutex> lock(mtx_process_status);
-            //printd(5, "process::async_wait() (%d: %s) %s; setting running_flag = false (waiting: %d)\n", ec.value(),
-            //    ec.category().name(), ec.message().c_str(), process_status_waiting);
-            exit_code = WEXITSTATUS(wstatus);
-            if (process_status_waiting) {
-                cond_process_status.notify_all();
             }
         } else {
             boost::system::error_code ec;
@@ -1414,9 +1376,9 @@ bool ProcessPriv::wait(int64 t, ExceptionSink* xsink) {
     }
 
     // the background handler does not report the end of a detached process or of one created from a PID, so
-    // without polling, the wait would return at once as if the process had ended
+    // without waiting for it otherwise, the wait would return at once as if the process had ended
     if (detached_pid || from_pid) {
-        if (!pollForEnd(t < 0 ? 0 : t, xsink)) {
+        if (!waitForEnd(t < 0 ? 0 : t, xsink)) {
             return false;
         }
         // rethrows any background exceptions
@@ -1449,6 +1411,60 @@ bool ProcessPriv::wait(int64 t, ExceptionSink* xsink) {
     }
 
     return false;
+}
+
+void ProcessPriv::openEndFd(int pid) {
+// the descriptor is waited on with qore_cancellable_poll(), so that a cancellation ends the wait at once
+#if defined(__linux__) && defined(SYS_pidfd_open) && defined(_QORE_HAS_CANCELLABLE_POLL)
+    assert(end_fd == -1);
+    // pidfd_open() sets close-on-exec; on a kernel without it (before Linux 5.3), the process is polled
+    end_fd = static_cast<int>(::syscall(SYS_pidfd_open, static_cast<pid_t>(pid), 0));
+#endif
+}
+
+bool ProcessPriv::waitForEnd(int64 ms, ExceptionSink* xsink) {
+#ifdef _QORE_HAS_CANCELLABLE_POLL
+    if (end_fd == -1) {
+        return pollForEnd(ms, xsink);
+    }
+
+    std::chrono::steady_clock::time_point deadline;
+    if (ms >= 0) {
+        deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    }
+    while (true) {
+        int timeout_ms = -1;
+        if (ms >= 0) {
+            int64 remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline
+                - std::chrono::steady_clock::now()).count();
+            // a timeout longer than poll() takes is waited for in parts
+            timeout_ms = remaining <= 0 ? 0 : (remaining > INT_MAX ? INT_MAX : static_cast<int>(remaining));
+        }
+        struct pollfd pfd = {end_fd, POLLIN, 0};
+        // a cancellation of the thread ends the wait at once
+        int rc = qore_cancellable_poll(&pfd, 1, timeout_ms, xsink, "Process::wait");
+        if (rc == QORE_POLL_CANCELLED) {
+            return false;
+        }
+        if (rc < 0) {
+            xsink->raiseErrnoException("PROCESS-WAIT-ERROR", errno, "cannot wait for the end of the process with "
+                "PID %d", detached_pid ? detached_pid : m_process->id());
+            return false;
+        }
+        if (rc > 0) {
+            // the process has ended; running() collects the exit code of a detached child of this process
+            running(xsink);
+            return !*xsink;
+        }
+        // the timeout expired, unless it was longer than one poll() call takes
+        if (ms < 0 || std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+    }
+#else
+    // an older libqore cannot end a wait on a descriptor when the thread is cancelled
+    return pollForEnd(ms, xsink);
+#endif
 }
 
 bool ProcessPriv::pollForEnd(int64 ms, ExceptionSink* xsink) {
@@ -1488,14 +1504,24 @@ bool ProcessPriv::detach(ExceptionSink* xsink) {
         return false;
     }
 
+    // the handle of a detached process has been released and has no PID any more, so the process is detached once
+    if (detached_pid) {
+        return true;
+    }
+
     try {
-        detached_pid = m_process->id();
+        int pid = m_process->id();
         m_process->detach();
+        detached_pid = pid;
     } catch (const std::exception& ex) {
         const char* err = ex.what();
         xsink->raiseException("PROCESS-WAIT-ERROR", err);
-        detached_pid = 0;
         return false;
+    }
+    // the background handler does not report the end of a detached process; one attached by its PID has the
+    // descriptor already
+    if (end_fd == -1) {
+        openEndFd(detached_pid);
     }
     return true;
 }

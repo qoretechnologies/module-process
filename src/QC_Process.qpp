@@ -287,7 +287,8 @@ p.wait();
       in the Process constructors. If it's not given, parent's ENV PATH is used.
       This value is not passed to child's ENV at all.
     - \c stdout: an opened %Qore \c File or \c OutputStream object; standard output of the process will be redirected
-      to this object.  In case an \c OutputStream object is used here, the @ref readStdout() and
+      to this object.  A \c File object stays open and owned by the caller: the child writes to its own copy of the
+      file's descriptor, so the same \c File object can also be given for \c stderr.  In case an \c OutputStream object is used here, the @ref readStdout() and
       @ref readStdoutBinary() methods cannot be called, or a \c PROCESS-STREAM-ERROR exception will be thrown.
     - \c stderr: an opened %Qore \c File or \c OutputStream object; standard error output of the process will be
       redirected to this object.  In case an \c OutputStream object is used here, the @ref readStderr() and
@@ -385,7 +386,8 @@ qclass Process [dom=EXTERNAL_PROCESS; arg=ProcessPriv* priv; ns=Qore::Process];
 /**
     @param pid the PID of the process.
 
-    @note The only functionality available when this constructor is used is id(); all other calls will fail
+    @note With this constructor, id(), running(), wait(), detach() and terminate() can be used; the output of the
+    process cannot be read
  */
 Process::constructor(int pid) [flags=NAMED_ARGS] {
     try {
@@ -591,7 +593,10 @@ bool Process::wait(timeout timeout) [flags=NAMED_ARGS] {
 }
 
 //! Detach the child, i.e. let it run after this handle dies.
-/**
+/** After this call, running(), wait() and exitCode() still report the process; on Linux, a wait ends as soon as the
+    process ends.  The output of the process is no longer read, and data passed to write() is no longer sent to it.
+    Calling this method again has no effect.
+
     @throw PROCESS-CHECK-ERROR in case child handle was not properly initialized
  */
 nothing Process::detach() {

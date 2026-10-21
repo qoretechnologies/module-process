@@ -131,6 +131,9 @@ public class Main inherits QUnit::Test {
         addTestCase("a child starts with the default signal state", \childSignalStateTest());
         addTestCase("a timed read ends with the output", \timedReadEndsWithOutputTest());
         addTestCase("a wait returns when a detached or attached process ends", \waitUnwatchedProcessTest());
+        addTestCase("a detached process is tracked by its own PID", \detachedProcessTrackingTest());
+        addTestCase("a wait on a detached or attached process ends with a cancellation", \waitUnwatchedCancelTest());
+        addTestCase("an output File stays open and owned by the caller", \outputFileOwnershipTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -988,6 +991,175 @@ public class Main inherits QUnit::Test {
             assertTrue(ms >= 1000 && ms < max_ms, sprintf("the wait returned after %d ms", ms));
             assertFalse(Process::checkPid(pid), "the attached process has ended");
         }
+    }
+
+    detachedProcessTrackingTest() {
+        string fifo = makeFifo();
+        on_exit unlink(fifo);
+
+        # a second detach() took the PID of the released handle, -1, and the process was then checked and waited for
+        # as any child of this process
+        {
+            Process p("sh", ("-c", sprintf("cat %s >/dev/null; exit 3", fifo)));
+            int pid = p.id();
+            p.detach();
+            p.detach();
+            assertEq(pid, p.id(), "a process detached twice keeps its PID");
+            assertTrue(p.running(), "a process detached twice runs");
+            assertFalse(p.wait(0), "a timed wait on a running detached process");
+            releaseFifoReader(fifo);
+            assertTrue(p.wait(), "a wait on a detached process that ends");
+            assertFalse(p.running(), "the detached process has ended");
+            assertEq(3, p.exitCode(), "the exit code of a detached process");
+        }
+
+        # a detached process ended by a signal reported 0 as its exit code; it reports what a process that is not
+        # detached reports: the signal
+        {
+            # each reads its standard input, which stays open
+            Process attached("cat");
+            Process detached("cat");
+            detached.detach();
+            assertEq(0, kill(attached.id(), SIGKILL));
+            assertEq(0, kill(detached.id(), SIGKILL));
+            assertTrue(attached.wait(), "a wait on a killed process");
+            assertTrue(detached.wait(), "a wait on a killed detached process");
+            assertEq(SIGKILL, attached.exitCode(), "the exit code of a killed process");
+            assertEq(attached.exitCode(), detached.exitCode(), "the exit code of a killed detached process");
+        }
+
+        # a detached process attached by its PID that is not a child of this process was reported ended at once
+        {
+            int pid = startReparentedReader(fifo);
+            Process p(pid);
+            p.detach();
+            assertTrue(p.running(), "a detached process attached by its PID runs");
+            assertFalse(p.wait(0), "a timed wait on a running detached process attached by its PID");
+            releaseFifoReader(fifo);
+            assertTrue(p.wait(), "a wait on a detached process attached by its PID that ends");
+            assertFalse(p.running(), "the detached process attached by its PID has ended");
+        }
+    }
+
+    waitUnwatchedCancelTest() {
+        string fifo = makeFifo();
+        on_exit unlink(fifo);
+
+        # a detached child of this process
+        {
+            Process p("sh", ("-c", sprintf("cat %s >/dev/null", fifo)));
+            p.detach();
+            hash<auto> rv = cancelBlockedWait(p, -1);
+            assertEq("THREAD-CANCELLED", rv.err, "a wait on a detached process ends with the cancellation");
+            rv = cancelBlockedWait(p, 3600000);
+            assertEq("THREAD-CANCELLED", rv.err, "a timed wait on a detached process ends with the cancellation");
+            assertTrue(p.running(), "the detached process runs after the cancelled waits");
+            releaseFifoReader(fifo);
+            assertTrue(p.wait(), "a wait on the detached process after the cancelled waits");
+        }
+
+        # a process attached by its PID that is not a child of this process
+        {
+            int pid = startReparentedReader(fifo);
+            Process p(pid);
+            hash<auto> rv = cancelBlockedWait(p, -1);
+            assertEq("THREAD-CANCELLED", rv.err, "a wait on an attached process ends with the cancellation");
+            rv = cancelBlockedWait(p, 3600000);
+            assertEq("THREAD-CANCELLED", rv.err, "a timed wait on an attached process ends with the cancellation");
+            assertTrue(p.running(), "the attached process runs after the cancelled waits");
+            releaseFifoReader(fifo);
+            assertTrue(p.wait(), "a wait on the attached process after the cancelled waits");
+            assertFalse(Process::checkPid(pid), "the attached process has ended");
+        }
+    }
+
+    outputFileOwnershipTest() {
+        string path = tmp_location() + DirSep + get_random_string();
+        File f();
+        f.open2(path, O_WRONLY | O_TRUNC | O_CREAT | O_APPEND);
+        on_exit try {
+            unlink(path);
+        } catch () {}
+
+        *int fds = HAVE_PROCESS_GETDESCRIPTORCOUNT ? Process::getDescriptorCount() : NOTHING;
+        # one File for both outputs, as for a log file
+        {
+            Process p("sh", ("-c", "echo out; echo err >&2"), {"stdout": f, "stderr": f});
+            assertTrue(f.isOpen(), "the File given stays open");
+            assertTrue(p.wait(), "the process ends");
+        }
+        if (fds) {
+            assertEq(fds, Process::getDescriptorCount(), "no descriptor is left open by the redirection");
+        }
+        f.write("after\n");
+        f.close();
+        assertEq("out\nerr\nafter\n", ReadOnlyFile::readTextFile(path), "the output of both streams and the "
+            "caller's own write");
+
+        # a valid stdout File and an invalid stderr option leave no descriptor open
+        f.open2(path, O_WRONLY | O_TRUNC);
+        if (fds) {
+            fds = Process::getDescriptorCount();
+        }
+        assertThrows("PROCESS-OPTION-ERROR", sub () { Process p("sh", ("-c", "true"), {"stdout": f, "stderr": 2}); });
+        if (fds) {
+            assertEq(fds, Process::getDescriptorCount(), "no descriptor is left open by a failed redirection");
+        }
+        assertTrue(f.isOpen(), "the File given stays open after a failed redirection");
+        f.close();
+    }
+
+    #! Creates a FIFO in the temporary directory and returns its path
+    private string makeFifo() {
+        string fifo = tmp_location() + DirSep + get_random_string();
+        assertEq(0, mkfifo(fifo), "the FIFO is created");
+        return fifo;
+    }
+
+    #! Opens the given FIFO for writing and closes it, so that a process reading it reaches its end
+    /** The open waits for the reader to open the FIFO, so the reader is released whether or not it has started reading
+    */
+    private releaseFifoReader(string fifo) {
+        File w();
+        w.open2(fifo, O_WRONLY);
+        w.close();
+    }
+
+    #! Starts a process that reads the given FIFO to its end and is not a child of this process
+    /** The shell that starts it exits at once, so the process is reparented
+
+        @return the PID of the process
+    */
+    private int startReparentedReader(string fifo) {
+        Process sh("sh", ("-c", sprintf("cat %s >/dev/null 2>&1 & echo $!", fifo)));
+        sh.wait();
+        int pid = sh.readStdout(100).toInt();
+        assertTrue(Process::checkPid(pid), "the reparented reader runs");
+        return pid;
+    }
+
+    #! Waits on a process in a new thread, cancels the thread once it has started, and returns the error of the wait
+    private hash<auto> cancelBlockedWait(Process p, int timeout_ms) {
+        Queue started();
+        Queue done();
+        int tid = background sub () {
+            hash<auto> rv;
+            try {
+                started.push(True);
+                if (timeout_ms < 0) {
+                    p.wait();
+                } else {
+                    p.wait(timeout_ms);
+                }
+                rv.err = "NONE";
+            } catch (hash<ExceptionInfo> ex) {
+                rv.err = ex.err;
+            }
+            done.push(rv);
+        }();
+        started.get();
+        cancel_thread(tid, "process wait test");
+        return done.get();
     }
 
     timedReadEndsWithOutputTest() {

@@ -178,6 +178,10 @@ private:
 
     DLLLOCAL void optsStdin(const QoreHashNode* opts, ExceptionSink* xsink);
 
+    //! Processes the \c stdout or \c stderr option
+    /** @return a duplicate of the descriptor of the File object given, which the caller closes, or -1 if no File
+        object was given (an OutputStream is set on the output buffer) or an exception was raised
+    */
     DLLLOCAL int optsStdout(const char* keyName, const QoreHashNode* opts, ExceptionSink* xsink);
 
     DLLLOCAL bool processCheck(ExceptionSink* xsink);
@@ -199,8 +203,8 @@ private:
             std::vector<std::string>& args,
             env_t env,
             const char* cwd,
-            FILE* stdoutFile,
-            FILE* stderrFile,
+            int stdoutFd,
+            int stderrFd,
             const QoreHashNode* opts,
             bool setNice,
             int niceValue,
@@ -639,17 +643,34 @@ private:
     //! Running flag; lock: mtx_process_status, cond: cond_process_status
     bool running_flag = false;
 
-    //! Detached flag
+    //! The PID of a detached process; 0 if the process has not been detached
     int detached_pid = 0;
 
     //! True if the object was created from a PID; the background handler does not report the end of such a process
     bool from_pid = false;
 
-    //! Polls until the process ends or the timeout expires
-    /** The background handler reports only the end of a process started by this object and not detached; the end of
-        a detached process, or of one this object was created from by its PID, can only be polled.
+    //! A descriptor that becomes readable when a process whose end the background handler does not report ends
+    /** A pidfd on Linux with a libqore that provides qore_cancellable_poll(), opened when the process is detached or
+        attached by its PID, so that a PID reused after the process ended is never taken for it; -1 otherwise
+    */
+    int end_fd = -1;
 
-        @param ms the timeout in milliseconds; a negative value polls until the process ends
+    //! Opens @ref end_fd for the given process if the platform supports it
+    DLLLOCAL void openEndFd(int pid);
+
+    //! Waits until a process whose end the background handler does not report ends, or the timeout expires
+    /** The background handler reports only the end of a process started by this object and not detached.  The end of
+        a detached process, or of one this object was created from by its PID, is waited for on @ref end_fd, and a
+        cancellation of the calling thread ends the wait at once; without @ref end_fd, the process is polled.
+
+        @param ms the timeout in milliseconds; a negative value waits until the process ends
+
+        @return true if the process ended; false if the timeout expired, or if an exception was raised
+    */
+    DLLLOCAL bool waitForEnd(int64 ms, ExceptionSink* xsink);
+
+    //! Polls until the process ends or the timeout expires; used only where there is no @ref end_fd
+    /** @param ms the timeout in milliseconds; a negative value polls until the process ends
 
         @return true if the process ended; false if the timeout expired, or if an exception was raised
     */

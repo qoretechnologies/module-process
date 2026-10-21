@@ -12,7 +12,15 @@
     - A wait with a timeout (@ref Qore::Process::Process::wait() "wait()") on a detached process, or on a process
       attached by its PID, returns when the process ends or the timeout expires; previously it returned at once, as
       if the process had ended, while the process still ran.  A wait without a timeout on a process attached by its
-      PID returns when the process ends; previously it also returned at once.
+      PID returns when the process ends; previously it also returned at once.  On Linux, such a wait ends as soon as
+      the process ends, and a cancellation of the waiting thread ends it at once.
+    - A process detached twice keeps its PID; previously the second @ref Qore::Process::Process::detach() "detach()"
+      lost it, and the process could then be taken for another child of the calling process.  A detached process
+      attached by its PID is reported running while it runs; previously it was reported ended.  A detached process
+      ended by a signal reports the signal as its exit code, as a process that is not detached does; previously it
+      reported 0.
+    - A \c File object given for the \c stdout or \c stderr option stays open and owned by the caller, and the same
+      \c File object can be given for both options; the redirection no longer leaks memory.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.
