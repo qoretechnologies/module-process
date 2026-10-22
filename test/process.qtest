@@ -263,6 +263,17 @@ public class Main inherits QUnit::Test {
         return m_prefix;
     }
 
+    #! returns True if an element of PATH is the directory of this script (an empty element is the current directory)
+    bool scriptDirInPath() {
+        string dir = normalize_dir(get_script_dir());
+        foreach string elem in ((getenv("PATH") ?? "").split(":")) {
+            if (normalize_dir(elem == "" ? "." : elem) == dir) {
+                return True;
+            }
+        }
+        return False;
+    }
+
     auto getTestValue(string key) {
         string os = Qore::PlatformOS.upr();
         if (!m_test_paths.hasKey(os)) {
@@ -312,7 +323,15 @@ public class Main inherits QUnit::Test {
         path = "abc" + DirSep + "test_true.q";
         assertThrows("PROCESS-SEARCH-PATH-ERROR", sub () { proc = new Process(path, ("path": ())); });
         path = "test_true.q";
-        assertThrows("PROCESS-SEARCH-PATH-ERROR", sub () { proc = new Process(path); });
+        # the scripts of this directory are found in PATH if PATH includes the directory (ex: "." while it is the
+        # current directory)
+        if (scriptDirInPath()) {
+            proc = new Process(path);
+            proc.wait();
+            assertEq(0, proc.exitCode(), "test_true.q is found in PATH, which includes its directory");
+        } else {
+            assertThrows("PROCESS-SEARCH-PATH-ERROR", sub () { proc = new Process(path); });
+        }
         path = DirSep + "test_true.q";
         assertThrows("PROCESS-CONSTRUCTOR-ERROR", sub () { proc = new Process(path, ("path": ())); });
     }
@@ -326,12 +345,19 @@ public class Main inherits QUnit::Test {
         string exe = getTestValue("testTrue");
         softlist args = ( 1, );
 
-        try {
+        # the scripts of this directory are found in PATH if PATH includes the directory
+        if (scriptDirInPath()) {
             Process p1(exe);
             p1.wait();
-            fail();
-        } catch (hash<ExceptionInfo> ex) {
-            assertEq("PROCESS-SEARCH-PATH-ERROR", ex.err, "it should not be found");
+            assertEq(0, p1.exitCode(), "it is found in PATH, which includes its directory");
+        } else {
+            try {
+                Process p1(exe);
+                p1.wait();
+                fail();
+            } catch (hash<ExceptionInfo> ex) {
+                assertEq("PROCESS-SEARCH-PATH-ERROR", ex.err, "it should not be found");
+            }
         }
 
         Process p2(exe, args, opts);
@@ -1600,8 +1626,9 @@ public class Main inherits QUnit::Test {
         # Test that non-existent command returns false
         assertFalse(Process::commandExists("some-nonexistent-command-12345"), "non-existent command should return false");
 
-        # Test with test scripts
-        assertFalse(Process::commandExists("test_true.q"), "test_true.q should not be in PATH by default");
+        # the test scripts are found if PATH includes their directory (ex: "." while it is the current directory)
+        assertEq(scriptDirInPath(), Process::commandExists("test_true.q"),
+            "test_true.q is found if PATH includes its directory");
     }
 
     shellOptionTest() {
