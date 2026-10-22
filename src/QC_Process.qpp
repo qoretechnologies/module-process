@@ -412,6 +412,12 @@ p.wait();
       This handler is invoked if the exec call errored.
       Posix only.
 
+    The \c on_exec_setup and \c on_exec_error handlers run in the child process, which @ref Qore::fork() "fork()"
+    created, before and after its command is executed: only the thread that starts the process exists there, so they
+    must not use objects that other threads may be using (for example a @ref Qore::Thread::Mutex "Mutex" that another
+    thread holds), and their changes are made in the child, not in the parent.  The other handlers run in the thread
+    that starts the process.
+
     Option example:
 
     @code
