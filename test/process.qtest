@@ -933,7 +933,8 @@ public class Main inherits QUnit::Test {
         }
 
         # Use Python's os.fork() to reliably create a zombie process
-        # The parent forks a child that exits immediately, then sleeps without calling wait()
+        # The parent forks a child that exits immediately, waits until it has exited without reaping it (WNOWAIT), so
+        # that it is a zombie, prints its PID, and then sleeps without reaping it
         string script = tmp_location() + DirSep + "zombie_creator.py";
         {
             File f();
@@ -944,32 +945,30 @@ public class Main inherits QUnit::Test {
                 "pid = os.fork()\n"
                 "if pid == 0:\n"
                 "    os._exit(0)\n"
+                "os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)\n"
                 "print(pid, flush=True)\n"
                 "time.sleep(300)\n"
             );
         }
 
         Process p("python3", (script,));
+        # the script sleeps until it is terminated, also when an assertion fails
+        on_exit {
+            p.terminate();
+            unlink(script);
+        }
 
-        # Read the child PID from stdout
-        string child_pid_str;
-        int retries = 100;
-        while (retries > 0) {
-            *string s = p.readStdout(100);
-            if (s) {
-                child_pid_str += s;
-                if (child_pid_str.find("\n") >= 0) {
-                    break;
-                }
+        # Read the PID of the zombie from stdout; the time limit only guards against a hung script
+        string child_pid_str = "";
+        while (child_pid_str.find("\n") < 0) {
+            *string s = p.readStdout(100, 60s);
+            if (!s) {
+                break;
             }
-            usleep(50ms);
-            --retries;
+            child_pid_str += s;
         }
         int child_pid = trim(child_pid_str).toInt();
         assertTrue(child_pid > 0, sprintf("child PID should be positive (got %d)", child_pid));
-
-        # Wait for the child to exit and become a zombie
-        sleep(500ms);
 
         # Verify the process is actually a zombie
         if (Qore::PlatformOS == "Linux") {
@@ -977,20 +976,13 @@ public class Main inherits QUnit::Test {
             string stat_path = sprintf("/proc/%d/stat", child_pid);
             assertTrue(is_file(stat_path), sprintf("zombie /proc/%d/stat should exist", child_pid));
         } else {
-            # On macOS/*BSD, verify via ps
+            # On macOS/*BSD, verify via ps; its output is complete once it has ended: reading it while ps runs, until
+            # ps is no longer running, missed the output read after the last read and before the end of ps
             Process ps("ps", ("-o", "state=", "-p", string(child_pid)));
-            string state;
-            retries = 20;
-            while (retries > 0) {
-                *string s = ps.readStdout(100);
-                if (s) {
-                    state += s;
-                }
-                if (!ps.running()) {
-                    break;
-                }
-                usleep(50ms);
-                --retries;
+            ps.wait();
+            string state = "";
+            while (*string s = ps.readStdout(100)) {
+                state += s;
             }
             state = trim(state);
             assertTrue(state.size() > 0 && state[0] == "Z",
@@ -1000,10 +992,6 @@ public class Main inherits QUnit::Test {
         # checkPid should return false for zombie processes
         assertFalse(Process::checkPid(child_pid),
             sprintf("checkPid should return false for zombie process (PID %d)", child_pid));
-
-        # Clean up
-        p.terminate();
-        unlink(script);
     }
 
     outputRedirectTest() {
