@@ -163,14 +163,21 @@ static void constructor_serializer_fork_child(void*) {
 // the registration of the fork handler of constructor_serializer
 static QoreForkHandlerRegistration* constructor_serializer_fork_reg = nullptr;
 
+void process_unregister_fork_handlers();
+
 int process_register_fork_handlers() {
     assert(!constructor_serializer_fork_reg);
     constructor_serializer_fork_reg = qore_register_fork_handler(QFR_MODULE_RESET, "process_constructor_serializer",
         nullptr, nullptr, constructor_serializer_fork_child, nullptr);
-    return constructor_serializer_fork_reg ? 0 : -1;
+    if (!constructor_serializer_fork_reg || process_priv_register_fork_handlers()) {
+        process_unregister_fork_handlers();
+        return -1;
+    }
+    return 0;
 }
 
 void process_unregister_fork_handlers() {
+    process_priv_unregister_fork_handlers();
     qore_unregister_fork_handler(constructor_serializer_fork_reg);
     constructor_serializer_fork_reg = nullptr;
 }
@@ -444,6 +451,10 @@ on_success: {name: "on_success", exe: "/opt/local/libexec/gnubin/true", pid: 493
       single-character encoding (like \c ASCII) or use the binary read methods instead.  If a stream is used instead,
       even if the object is a string stream, binary writes are made to the stream and this class makes no effort to
       return valid multi-byte character data.
+    - A Process object belongs to the process that made it: in a child process created with
+      @ref Qore::fork() "fork()", its methods raise \c PROCESS-FORK-ERROR, since its child process and the thread
+      that reads its output belong to the parent, and deleting it there neither waits for that thread nor stops the
+      parent's child process.  New Process objects can be made in the child.
  */
 qclass Process [dom=EXTERNAL_PROCESS; arg=ProcessPriv* priv; ns=Qore::Process];
 
@@ -563,6 +574,12 @@ Process::copy() {
     \c boost::process
 */
 Process::destructor() {
+    // an object made in a parent of the current process, which was created with fork(), is abandoned: the thread
+    // that reads the output of its child does not exist here, so the object cannot be finalized, and its child
+    // process is the parent's, which deleting the object would stop; its private data is not released
+    if (priv->inheritedByFork()) {
+        return;
+    }
     {
         ConstructorSerializerHelper csh;
         priv->destructor(xsink);

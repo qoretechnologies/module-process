@@ -26,6 +26,7 @@
 #define PROCESSPRIV_H
 
 // std
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -84,6 +85,18 @@ public:
     }
 };
 
+//! The number of children created with fork() in the line of processes that leads to the current process
+/** Incremented in each child created with fork(); a ProcessPriv object made in an earlier generation was made in a
+    parent of the current process, where its background I/O thread runs and whose child it represents
+*/
+DLLLOCAL extern std::atomic<unsigned> process_fork_generation;
+
+//! Registers the fork handlers of ProcessPriv and of the Boost.Asio state it uses; returns -1 if there is no memory
+DLLLOCAL int process_priv_register_fork_handlers();
+
+//! Removes the fork handlers registered with process_priv_register_fork_handlers()
+DLLLOCAL void process_priv_unregister_fork_handlers();
+
 class ProcessPriv : public AbstractPrivateData {
 public:
     DLLLOCAL ProcessPriv(pid_t pid, ExceptionSink* xsink);
@@ -91,6 +104,15 @@ public:
     DLLLOCAL ProcessPriv(const char* command, const QoreListNode* arguments, const QoreHashNode* opts, ExceptionSink* xsink);
 
     DLLLOCAL int destructor(ExceptionSink* xsink);
+
+    //! Returns true if the object was made in a parent of the current process, which was created with fork()
+    /** Such an object cannot be used: its background I/O thread does not exist in the current process, and its child
+        process is a child of the parent.  It cannot be deleted either, since deleting it would wait for that thread
+        and stop the parent's child; it is abandoned in the child process.
+    */
+    DLLLOCAL bool inheritedByFork() const {
+        return fork_generation != process_fork_generation.load(std::memory_order_relaxed);
+    }
 
     DLLLOCAL int exitCode(ExceptionSink* xsink);
 
@@ -713,6 +735,9 @@ private:
 
     //! True if the object was created from a PID; the background handler does not report the end of such a process
     bool from_pid = false;
+
+    //! The value of process_fork_generation in the process that made the object
+    const unsigned fork_generation = process_fork_generation.load(std::memory_order_relaxed);
 
     //! A descriptor that becomes readable when a process whose end the background handler does not report ends
     /** A pidfd on Linux with a libqore that provides qore_cancellable_poll(), opened when the process is detached or

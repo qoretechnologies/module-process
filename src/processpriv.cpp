@@ -50,6 +50,8 @@
 // module
 #include "unix-config.h"
 
+#include <qore/QoreForkHandler.h>
+
 //! Closes a descriptor that a child process was launched with, if any
 static void close_output_fd(int fd) {
     if (fd != -1) {
@@ -59,6 +61,83 @@ static void close_output_fd(int fd) {
 
 //! The interval in microseconds between checks of a process whose end is polled
 #define WAIT_END_POLL_US 10000
+
+std::atomic<unsigned> process_fork_generation{0};
+
+//! The child fork handler of the Process objects: the objects made in the parent become unusable in the child
+/** Their background I/O threads do not exist in the child, and their child processes are children of the parent; see
+    ProcessPriv::inheritedByFork().  No lock is involved.
+*/
+static void process_objects_fork_child(void*) {
+    process_fork_generation.fetch_add(1, std::memory_order_relaxed);
+}
+
+//! The fork handlers of the global signal state of Boost.Asio, through which the end of a child can be watched
+/** Where no process descriptor is available (macOS, the BSDs, Linux without pidfd_open()), Boost.Process waits for
+    the end of a child with an asio::signal_set for SIGCHLD.  All signal sets in the process share one state: a lock,
+    a pipe that the signal handler writes to, the list of the services of the io_contexts with signal sets, and the
+    count of the registrations of each signal.  In a child created with fork(), the lock can be held by a thread of
+    the parent that does not exist there, the pipe is shared with the parent (a child reading it would take the
+    parent's notifications, and the parent the child's), and the services belong to io_contexts that are abandoned in
+    the child (see ProcessPriv::inheritedByFork()).  The child handler gives the child a state of its own with no
+    signal sets; the next signal set opens a new pipe and installs the signal handler again.
+
+    The lock is only held briefly by Boost.Asio, which takes no lock of the library while it holds it, so it is a leaf
+    (QFR_MODULE_LEAF) acquired before fork().
+*/
+static void asio_signal_state_fork_prepare(void*) {
+    boost::asio::detail::get_signal_state()->mutex_.lock();
+}
+
+static void asio_signal_state_fork_parent(void*) {
+    boost::asio::detail::get_signal_state()->mutex_.unlock();
+}
+
+static void asio_signal_state_fork_child(void*) {
+    boost::asio::detail::signal_state* state = boost::asio::detail::get_signal_state();
+    // the forking thread holds the lock from the prepare handler; it is initialized again by assigning its static
+    // initializer
+    state->mutex_ = boost::asio::detail::static_mutex BOOST_ASIO_STATIC_MUTEX_INIT;
+    // the descriptors of the pipe are only closed in the child; the parent keeps its own
+    if (state->read_descriptor_ != -1) {
+        ::close(state->read_descriptor_);
+        state->read_descriptor_ = -1;
+    }
+    if (state->write_descriptor_ != -1) {
+        ::close(state->write_descriptor_);
+        state->write_descriptor_ = -1;
+    }
+    state->fork_prepared_ = false;
+    state->service_list_ = nullptr;
+    for (int i = 0; i < boost::asio::detail::max_signal_number; ++i) {
+        state->registration_count_[i] = 0;
+        state->flags_[i] = boost::asio::signal_set_base::flags_t();
+    }
+}
+
+//! The registrations of the fork handlers of this file
+static QoreForkHandlerRegistration* process_objects_fork_reg = nullptr;
+static QoreForkHandlerRegistration* asio_signal_state_fork_reg = nullptr;
+
+int process_priv_register_fork_handlers() {
+    assert(!process_objects_fork_reg && !asio_signal_state_fork_reg);
+    process_objects_fork_reg = qore_register_fork_handler(QFR_MODULE_LEAF, "process_objects", nullptr, nullptr,
+        process_objects_fork_child, nullptr);
+    asio_signal_state_fork_reg = qore_register_fork_handler(QFR_MODULE_LEAF, "process_asio_signal_state",
+        asio_signal_state_fork_prepare, asio_signal_state_fork_parent, asio_signal_state_fork_child, nullptr);
+    if (!process_objects_fork_reg || !asio_signal_state_fork_reg) {
+        process_priv_unregister_fork_handlers();
+        return -1;
+    }
+    return 0;
+}
+
+void process_priv_unregister_fork_handlers() {
+    qore_unregister_fork_handler(asio_signal_state_fork_reg);
+    asio_signal_state_fork_reg = nullptr;
+    qore_unregister_fork_handler(process_objects_fork_reg);
+    process_objects_fork_reg = nullptr;
+}
 
 DLLLOCAL extern const TypedHashDecl* hashdeclMemorySummaryInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclProcessResult;
@@ -840,6 +919,14 @@ boost::filesystem::path ProcessPriv::optsPath(const char* command, const QoreHas
 }
 
 bool ProcessPriv::processCheck(ExceptionSink* xsink) {
+    if (inheritedByFork()) {
+        if (xsink) {
+            xsink->raiseException("PROCESS-FORK-ERROR", "this Process object was made in a parent of the current "
+                "process, which was created with fork(); its child process and the thread that reads its output "
+                "belong to the parent, so it cannot be used in the current process");
+        }
+        return false;
+    }
     if (!m_process) {
         if (xsink) {
             xsink->raiseException("PROCESS-CHECK-ERROR", "Process is not initialized");

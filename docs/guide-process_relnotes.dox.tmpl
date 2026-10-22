@@ -48,6 +48,11 @@
       processes itself; previously such a callback waited forever.
     - A child process created with @ref Qore::fork() "fork()" while another thread starts a process can start
       processes itself; previously the child could wait forever for a lock held by a thread that did not exist in it.
+    - A Process object belongs to the process that made it: in a child process created with
+      @ref Qore::fork() "fork()", its methods raise \c PROCESS-FORK-ERROR, and deleting it there neither waits nor
+      stops the parent's child process; previously a wait for it in the child waited forever, deleting it stopped the
+      parent's child, and on platforms where the end of a child is watched with \c SIGCHLD (macOS and the BSDs), a
+      child that started processes could take the notifications of the parent, whose waits could then wait forever.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.

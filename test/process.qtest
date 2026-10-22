@@ -172,6 +172,8 @@ public class Main inherits QUnit::Test {
         addTestCase("a launch callback can start a process", \callbackProcessTest());
         addTestCase("a child created while another thread starts a process can start processes",
             \forkWhileStartingTest());
+        addTestCase("a Process object of the parent cannot be used in a child created with fork()",
+            \forkInheritedObjectTest());
         addTestCase("a child gets the environment changed with setenv()", \inheritedEnvironmentTest());
         addTestCase("the environment is copied consistently while other threads change it",
             \environmentChangeTest());
@@ -2085,6 +2087,51 @@ sub run(OutputStream stream) {
         Process child(pid);
         child.wait();
         assertEq("7", ReadOnlyFile::readTextFile(result), "the child started a process");
+    }
+
+    # a Process object made in the parent belongs to the parent: in a child created with fork(), its methods raise
+    # PROCESS-FORK-ERROR, deleting it neither waits for the parent's I/O thread nor stops the parent's child, and the
+    # child watches the end of its own processes without taking the notifications of the parent.  Previously a wait
+    # in the child waited forever for the parent's I/O thread (the test runner's time limit is only a guard), and
+    # deleting the object stopped the parent's child process.
+    forkInheritedObjectTest() {
+        if (!Option::HAVE_FORK) {
+            testSkip("fork() is not available");
+        }
+        string fifo = makeFifo();
+        on_exit unlink(fifo);
+        string result = tmp_location() + DirSep + "process-fork-object-" + get_random_string();
+        on_exit unlink(result);
+
+        # the parent's child runs until the FIFO is released
+        Process p("sh", ("-c", sprintf("cat %s >/dev/null; echo done", fifo)));
+        int pid = fork();
+        if (!pid) {
+            # the child
+            string err;
+            try {
+                p.wait();
+                err = "waited";
+            } catch (hash<ExceptionInfo> ex) {
+                err = ex.err;
+            }
+            delete p;
+            # the child starts and waits for a process of its own
+            hash<ProcessResult> r = Process::run("sh", ("-c", "exit 5"));
+            File f();
+            f.open2(result, O_CREAT | O_WRONLY | O_TRUNC);
+            f.printf("%s %d", err, r.exit_code);
+            exit(0);
+        }
+        assertGt(0, pid, "fork() succeeded");
+        Process child(pid);
+        child.wait();
+        assertEq("PROCESS-FORK-ERROR 5", ReadOnlyFile::readTextFile(result), "the object failed in the child");
+        assertTrue(p.running(), "the parent's child still runs");
+        releaseFifoReader(fifo);
+        assertTrue(p.wait());
+        assertEq(0, p.exitCode());
+        assertEq("done\n", p.readStdout(100));
     }
 
     # without the env option, a child gets a copy of the environment of this process, read under the environment lock
