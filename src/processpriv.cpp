@@ -61,6 +61,8 @@ static void close_output_fd(int fd) {
 #define WAIT_END_POLL_US 10000
 
 DLLLOCAL extern const TypedHashDecl* hashdeclMemorySummaryInfo;
+DLLLOCAL extern const TypedHashDecl* hashdeclProcessResult;
+DLLLOCAL extern const TypedHashDecl* hashdeclResourceUsageInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclSystemMemoryInfo;
 
 //! Checks that an active sandbox allows the given access to a file or directory
@@ -2552,7 +2554,7 @@ int64 ProcessPriv::getDescriptorCount(ExceptionSink* xsink, int pid) {
 #include <sys/resource.h>
 
 static QoreHashNode* rusageToHash(const struct rusage& ru, ExceptionSink* xsink) {
-    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(autoTypeInfo), xsink);
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclResourceUsageInfo, xsink), xsink);
 
     // Convert timeval to float seconds
     double user_time = ru.ru_utime.tv_sec + (ru.ru_utime.tv_usec / 1000000.0);
@@ -2673,10 +2675,10 @@ QoreHashNode* ProcessPriv::getResourceUsage(int pid, ExceptionSink* xsink) {
     long ticks_per_sec = sysconf(_SC_CLK_TCK);
     long page_size = sysconf(_SC_PAGESIZE);
 
-    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(autoTypeInfo), xsink);
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclResourceUsageInfo, xsink), xsink);
     rv->setKeyValue("user_time", (double)utime / ticks_per_sec, xsink);
     rv->setKeyValue("system_time", (double)stime / ticks_per_sec, xsink);
-    rv->setKeyValue("max_rss", rss * page_size, xsink);
+    rv->setKeyValue("max_rss", rss * static_cast<int64>(page_size), xsink);
     rv->setKeyValue("shared_size", (int64)0, xsink);
     rv->setKeyValue("unshared_data_size", (int64)0, xsink);
     rv->setKeyValue("unshared_stack_size", (int64)0, xsink);
@@ -3727,7 +3729,7 @@ QoreHashNode* ProcessPriv::run(const char* command, const QoreListNode* argument
     }
 
     // Build result hash
-    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(autoTypeInfo), xsink);
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclProcessResult, xsink), xsink);
     rv->setKeyValue("stdout", stdout_str.release(), xsink);
     rv->setKeyValue("stderr", stderr_str.release(), xsink);
     rv->setKeyValue("exit_code", proc->exitCode(xsink), xsink);

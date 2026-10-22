@@ -168,6 +168,7 @@ public class Main inherits QUnit::Test {
         addTestCase("an output stream object given only in the options is written", \outputStreamObjectTest());
         addTestCase("an output stream is written under the sandbox of the code that started the process",
             \sandboxOutputStreamTest());
+        addTestCase("results have their documented types", \resultTypesTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -1989,6 +1990,30 @@ sub run(OutputStream stream) {
             proc.wait();
         }
         assertEq("unrestricted\n", ReadOnlyFile::readTextFile(output), "the stream wrote the output");
+    }
+
+    # run(), pipeline() and getResourceUsage() return the hashdecl types that they are declared with.  Previously they
+    # returned untyped hashes, so assigning the result to a variable of the declared type, as in their documentation,
+    # raised RUNTIME-TYPE-ERROR.
+    resultTypesTest() {
+        hash<ProcessResult> r = Process::run("sh", ("-c", "printf out; printf err >&2; exit 3"));
+        assertEq("hash<ProcessResult>", r.fullType());
+        assertEq(<ProcessResult>{"stdout": "out", "stderr": "err", "exit_code": 3, "ok": True}, r);
+
+        r = Process::pipeline((("echo", "piped"), ("cat",)));
+        assertEq("hash<ProcessResult>", r.fullType());
+        assertEq("piped\n", r.stdout);
+
+        hash<ResourceUsageInfo> usage = Process::getResourceUsage();
+        assertEq("hash<ResourceUsageInfo>", usage.fullType());
+        assertTrue(usage.max_rss > 0, "this process uses memory");
+        usage = Process::getResourceUsage(getpid());
+        assertEq("hash<ResourceUsageInfo>", usage.fullType());
+
+        Process p("sh", ("-c", "exit 0"));
+        p.wait();
+        usage = p.getResourceUsage();
+        assertEq("hash<ResourceUsageInfo>", usage.fullType());
     }
 
     getExecutablePathTest() {
