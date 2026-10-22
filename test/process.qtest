@@ -1754,26 +1754,37 @@ public class Main inherits QUnit::Test {
         }
     }
 
+    # terminateTree() kills the process and all its descendants.  Previously it killed only the process, and its
+    # children were left running.
     terminateTreeTest() {
-        # Test terminateTree() kills parent and children
-        {
-            # Echo a marker after the children fork so we can synchronize without polling.
-            Process p("bash", ("-c", "sleep 100 & sleep 100 & echo READY; wait"));
-            *string out = p.readStdout(6, 5000ms);
-            assertRegex("READY", out ?? "", "bash should signal that children have spawned");
+        if (Qore::PlatformOS != "Linux" && Qore::PlatformOS != "Darwin") {
+            testSkip("descendants are only collected on Linux and macOS");
+        }
+        # a child, and a grandchild under a second child; the marker is printed by the grandchild's parent after it
+        # has started it, when all the processes exist
+        Process p("bash", ("-c", "sleep 100 & sh -c 'sleep 100 & echo READY; wait' & wait"));
+        *string out = p.readStdout(6, 60s);
+        assertRegex("READY", out ?? "", "the processes have been started");
 
-            int pid = p.id();
-            assertTrue(p.running(), "process should be running");
-
-            if (Qore::PlatformOS == "Linux" || Qore::PlatformOS == "Darwin") {
-                p.terminateTree();
-                assertFalse(p.running(), "process should not be running after terminateTree");
-
-                # Verify parent is dead
-                assertFalse(Process::checkPid(pid), "parent should be dead");
-            } else {
-                p.terminate();
+        int pid = p.id();
+        list<int> descendants = ();
+        list<int> parents = (pid,);
+        while (parents) {
+            list<int> children = ();
+            foreach int parent in (parents) {
+                children += Process::getChildPids(parent);
             }
+            descendants += children;
+            parents = children;
+        }
+        assertEq(3, descendants.size(), sprintf("the tree has 3 descendants: %y", descendants));
+
+        assertTrue(p.terminateTree());
+        assertFalse(p.running(), "the process has ended");
+        assertFalse(Process::checkPid(pid), "the process has ended");
+        # the method returns when the descendants have ended
+        foreach int child in (descendants) {
+            assertFalse(Process::checkPid(child), sprintf("descendant %d has ended", child));
         }
     }
 

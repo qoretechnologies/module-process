@@ -1386,23 +1386,28 @@ static list<int> Process::getChildPids(int pid) [flags=NAMED_ARGS] {
     return ProcessPriv::getChildPids(pid, xsink);
 }
 
-//! Terminates this process
-/** This method terminates the main process.
+//! Terminates this process and all its descendants
+/** On Linux and macOS, the process is stopped first, then each of its descendants (the processes whose parent is
+    the process or one of its descendants) is stopped as soon as it is found, so that the tree can neither grow nor
+    lose a process while it is collected; then the descendants and the process are killed with \c SIGKILL.  The
+    processes of the process group of a process started by this object (which is its own process group leader) are
+    killed as well, so that a descendant whose parent has ended is not left running.  The method returns when the
+    descendants have ended.  On Linux, a descendant is signaled through a process descriptor (\c pidfd_open()), so
+    that a PID that is reused by an unrelated process is never signaled.  On other platforms, only the process and
+    its process group are killed.
 
     @par Example:
     @code{.py}
-Process p("bash", ("-c", "while true; do sleep 1; done"));
-p.terminateTree();  # Kills bash
+Process p("bash", ("-c", "sleep 100 & sleep 100 & wait"));
+p.terminateTree();  # kills bash and both sleep processes
     @endcode
 
     @return @ref Qore::True "True" if the process was terminated successfully
 
     @throw PROCESS-CHECK-ERROR in case child handle was not properly initialized
-    @throw PROCESS-TERMINATE-ERROR in case of error terminating the process
-
-    @note Currently this method only terminates the main process. Child process termination
-    is planned for a future release. For now, use Process::getChildPids() to manually
-    enumerate and terminate child processes if needed.
+    @throw PROCESS-TERMINATE-ERROR in case of error terminating the process, or if the processes of the system
+    cannot be listed
+    @throw FILESYSTEM-ACCESS-DENIED \c /proc cannot be read in the current sandbox (Linux)
 */
 bool Process::terminateTree() {
     return priv->terminateTree(xsink);

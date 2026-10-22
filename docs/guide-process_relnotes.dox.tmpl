@@ -58,6 +58,10 @@
       the documentation recommended the \c ENV hash for this, which is a copy of the environment made when %Qore
       started and lacks the changes made since with @ref Qore::setenv() "setenv()" and
       @ref Qore::unsetenv() "unsetenv()".
+    - @ref Qore::Process::Process::terminateTree() "Process::terminateTree()" kills the descendants of the process as
+      documented: on Linux and macOS they are stopped as they are found and killed with the process, and the
+      members of the process group of a process started by the object are killed as well; the method returns when
+      they have ended.  Previously only the process was killed, and its children kept running.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.

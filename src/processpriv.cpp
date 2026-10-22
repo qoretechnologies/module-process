@@ -26,10 +26,14 @@
 
 #include <unistd.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <string.h>
 #include <sched.h>
 #include <poll.h>
+#if defined(__APPLE__) && defined(__MACH__)
+#include <sys/event.h>
+#endif
 #ifdef __linux__
 #include <sys/prctl.h>
 #include <sys/syscall.h>
@@ -41,6 +45,8 @@
 #include <cctype>
 #include <climits>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 
 // boost
 #include <boost/numeric/conversion/cast.hpp>
@@ -2959,25 +2965,338 @@ QoreListNode* ProcessPriv::getChildPids(int pid, ExceptionSink* xsink) {
 #endif
 }
 
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+#define HAVE_PROCESS_TREE_SCAN 1
+
+//! A process of the tree that terminateTree() ends, with the parent it was found under
+struct process_tree_member {
+    pid_t pid;
+    pid_t ppid;
+    //! a descriptor for the process (a pidfd on Linux), or -1
+    int fd;
+};
+
+//! Reads the parent of every process in the system
+/** @param parents set to a map of the PIDs of all processes to their parents
+
+    @return 0 for OK, -1 if an exception was raised
+*/
+static int process_tree_read_parents(std::unordered_map<pid_t, pid_t>& parents, ExceptionSink* xsink) {
+    parents.clear();
+#ifdef __linux__
+    if (check_sandbox_read("/proc", xsink)) {
+        return -1;
+    }
+    DIR* procdir = opendir("/proc");
+    if (!procdir) {
+        xsink->raiseErrnoException("PROCESS-TERMINATE-ERROR", errno, "cannot open /proc");
+        return -1;
+    }
+    ON_BLOCK_EXIT(closedir, procdir);
+    struct dirent* entry;
+    unsigned count = 0;
+    while ((entry = readdir(procdir)) != nullptr) {
+        // there is one entry for each process in the system
+        if (!(++count % 100) && qore_check_cancel(xsink, "Process::terminateTree")) {
+            return -1;
+        }
+        char* endptr;
+        long pid = strtol(entry->d_name, &endptr, 10);
+        if (*endptr || pid <= 0) {
+            continue;
+        }
+        char path[32];
+        snprintf(path, sizeof(path), "/proc/%ld/stat", pid);
+        int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+        if (fd == -1) {
+            // the process ended
+            continue;
+        }
+        char buf[512];
+        ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+        ::close(fd);
+        if (n <= 0) {
+            continue;
+        }
+        buf[n] = '\0';
+        // the command name can contain any character; the fields after it follow the last ')'
+        const char* p = strrchr(buf, ')');
+        if (!p) {
+            continue;
+        }
+        // ") <state> <ppid>"
+        ++p;
+        while (*p == ' ') {
+            ++p;
+        }
+        while (*p && *p != ' ') {
+            ++p;
+        }
+        long ppid = strtol(p, &endptr, 10);
+        if (endptr == p) {
+            continue;
+        }
+        parents[static_cast<pid_t>(pid)] = static_cast<pid_t>(ppid);
+    }
+#else
+    int size = proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
+    if (size <= 0) {
+        xsink->raiseErrnoException("PROCESS-TERMINATE-ERROR", errno, "cannot list the processes of the system");
+        return -1;
+    }
+    // room for processes started meanwhile
+    std::vector<pid_t> pids(size / sizeof(pid_t) + 64);
+    size = proc_listpids(PROC_ALL_PIDS, 0, pids.data(), static_cast<int>(pids.size() * sizeof(pid_t)));
+    if (size <= 0) {
+        xsink->raiseErrnoException("PROCESS-TERMINATE-ERROR", errno, "cannot list the processes of the system");
+        return -1;
+    }
+    int num = size / static_cast<int>(sizeof(pid_t));
+    for (int i = 0; i < num; ++i) {
+        if (!(i % 100) && qore_check_cancel(xsink, "Process::terminateTree")) {
+            return -1;
+        }
+        if (pids[i] <= 0) {
+            continue;
+        }
+        struct proc_bsdinfo info;
+        if (proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &info, sizeof(info)) == sizeof(info)) {
+            parents[pids[i]] = static_cast<pid_t>(info.pbi_ppid);
+        }
+    }
+#endif
+    return 0;
+}
+
+//! Returns true if the process still has the given parent; false if it ended or its PID belongs to another process
+static bool process_tree_has_parent(pid_t pid, pid_t ppid) {
+#ifdef __linux__
+    char path[32];
+    snprintf(path, sizeof(path), "/proc/%d/stat", static_cast<int>(pid));
+    int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (fd == -1) {
+        return false;
+    }
+    char buf[512];
+    ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0) {
+        return false;
+    }
+    buf[n] = '\0';
+    const char* p = strrchr(buf, ')');
+    if (!p) {
+        return false;
+    }
+    ++p;
+    while (*p == ' ') {
+        ++p;
+    }
+    while (*p && *p != ' ') {
+        ++p;
+    }
+    char* endptr;
+    long current = strtol(p, &endptr, 10);
+    return endptr != p && current == ppid;
+#else
+    struct proc_bsdinfo info;
+    return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) == sizeof(info)
+        && static_cast<pid_t>(info.pbi_ppid) == ppid;
+#endif
+}
+
+//! Sends a signal to a member of the tree
+static void process_tree_signal(const process_tree_member& m, int sig) {
+#if defined(__linux__) && defined(SYS_pidfd_send_signal)
+    if (m.fd != -1) {
+        ::syscall(SYS_pidfd_send_signal, m.fd, sig, nullptr, 0);
+        return;
+    }
+#endif
+    // without a process descriptor, the PID is checked against its parent before it is signaled
+    if (process_tree_has_parent(m.pid, m.ppid)) {
+        ::kill(m.pid, sig);
+    }
+}
+
+//! Adds the processes whose parent is a member of the tree to it, stopped; returns the number of members added
+/** A process is stopped as soon as it is found, so that the tree can neither grow nor lose a process while it is
+    collected: a stopped process cannot start processes or end.  On Linux, the process is opened with pidfd_open()
+    before it is checked against its parent and stopped through the descriptor, so that a PID that was reused for an
+    unrelated process after the scan is never signaled.
+
+    @return the number of members added, or -1 if an exception was raised
+*/
+static int process_tree_add_children(std::vector<process_tree_member>& tree, ExceptionSink* xsink) {
+    std::unordered_map<pid_t, pid_t> parents;
+    if (process_tree_read_parents(parents, xsink)) {
+        return -1;
+    }
+    std::unordered_set<pid_t> members;
+    for (const process_tree_member& m : tree) {
+        members.insert(m.pid);
+    }
+    int added = 0;
+    // members added in this pass are searched in the same pass, so a whole branch is found at once
+    for (size_t i = 0; i < tree.size(); ++i) {
+        pid_t parent = tree[i].pid;
+        for (const auto& entry : parents) {
+            if (entry.second != parent || entry.first <= 1 || members.count(entry.first)) {
+                continue;
+            }
+            process_tree_member m = {entry.first, parent, -1};
+#if defined(__linux__) && defined(SYS_pidfd_open)
+            m.fd = static_cast<int>(::syscall(SYS_pidfd_open, m.pid, 0));
+            if (m.fd == -1 && errno == ESRCH) {
+                // the process ended
+                continue;
+            }
+            // the descriptor refers to the process found only if it still has the parent it was found under
+            if (m.fd != -1 && !process_tree_has_parent(m.pid, m.ppid)) {
+                ::close(m.fd);
+                continue;
+            }
+#endif
+            process_tree_signal(m, SIGSTOP);
+            members.insert(m.pid);
+            tree.push_back(m);
+            ++added;
+        }
+    }
+    return added;
+}
+
+//! Waits until the given members of the tree have ended; returns -1 if the wait was cancelled
+static int process_tree_wait(const std::vector<process_tree_member>& tree, ExceptionSink* xsink) {
+#if defined(__linux__) && defined(_QORE_HAS_CANCELLABLE_POLL)
+    for (const process_tree_member& m : tree) {
+        if (m.fd == -1) {
+            continue;
+        }
+        // a process descriptor becomes readable when the process ends; a cancellation ends the wait at once
+        struct pollfd pfd = {m.fd, POLLIN, 0};
+        while (true) {
+            int rc = qore_cancellable_poll(&pfd, 1, -1, xsink, "Process::terminateTree");
+            if (rc == QORE_POLL_CANCELLED) {
+                return -1;
+            }
+            if (rc < 0 && errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+    }
+#elif defined(__APPLE__) && defined(__MACH__) && defined(_QORE_HAS_CANCELLABLE_POLL)
+    // a kqueue reports the end of each process (EVFILT_PROC, NOTE_EXIT); a cancellation ends the wait at once
+    int kq = kqueue();
+    if (kq == -1) {
+        return 0;
+    }
+    ON_BLOCK_EXIT(::close, kq);
+    size_t waiting = 0;
+    for (const process_tree_member& m : tree) {
+        struct kevent kev;
+        EV_SET(&kev, m.pid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
+        // a process that has already ended cannot be registered (ESRCH)
+        if (!kevent(kq, &kev, 1, nullptr, 0, nullptr)) {
+            ++waiting;
+        }
+    }
+    while (waiting) {
+        struct pollfd pfd = {kq, POLLIN, 0};
+        int rc = qore_cancellable_poll(&pfd, 1, -1, xsink, "Process::terminateTree");
+        if (rc == QORE_POLL_CANCELLED) {
+            return -1;
+        }
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        struct kevent ev;
+        struct timespec zero = {0, 0};
+        int n = kevent(kq, nullptr, 0, &ev, 1, &zero);
+        if (n > 0) {
+            --waiting;
+        }
+    }
+#endif
+    return 0;
+}
+#endif
+
 bool ProcessPriv::terminateTree(ExceptionSink* xsink) {
     if (!processCheck(xsink)) {
         return false;
     }
 
-    // NOTE: Currently this method only terminates the main process and does NOT
-    // terminate any child processes. Its behavior is effectively the same as
-    // calling terminate(). Child process termination is temporarily disabled.
-    //
-    // TEMPORARILY DISABLED: Child process killing is disabled due to a bug that causes
-    // incorrect PIDs to be killed.
-    // TODO: Fix the getChildPids implementation and re-enable child killing.
-    //
-    // The issue is that getChildPids or the PPID verification is somehow returning
-    // or approving incorrect PIDs, leading to killing unrelated processes like
-    // systemd, ssh sessions, etc.
+    int pid = id(xsink);
+    if (*xsink) {
+        return false;
+    }
+    // pid <= 1 has special meanings to kill() and must never be signaled
+    if (pid <= 1) {
+        xsink->raiseException("PROCESS-TERMINATE-ERROR", "cannot terminate invalid process (pid=%d)", pid);
+        return false;
+    }
 
-    // Just terminate the main process for now; this is equivalent to terminate()
-    return terminate(xsink);
+#ifdef HAVE_PROCESS_TREE_SCAN
+    // the process is stopped first, so that it starts no more processes while its descendants are collected; each
+    // descendant is stopped when it is found, and the tree is scanned again until no new descendant is found
+    std::vector<process_tree_member> tree;
+    ON_BLOCK_EXIT([&tree] () {
+        for (const process_tree_member& m : tree) {
+            if (m.fd != -1) {
+                ::close(m.fd);
+            }
+        }
+    });
+    ::kill(pid, SIGSTOP);
+    tree.push_back({static_cast<pid_t>(pid), 0, -1});
+    while (true) {
+        int added = process_tree_add_children(tree, xsink);
+        if (added < 0) {
+            // the stopped processes are not left stopped
+            for (const process_tree_member& m : tree) {
+                if (m.pid != pid) {
+                    process_tree_signal(m, SIGCONT);
+                }
+            }
+            ::kill(pid, SIGCONT);
+            return false;
+        }
+        if (!added) {
+            break;
+        }
+    }
+    // the descendants are killed; a stopped process is killed as well
+    for (const process_tree_member& m : tree) {
+        if (m.pid != pid) {
+            process_tree_signal(m, SIGKILL);
+        }
+    }
+#endif
+
+    // the process started here is its own process group leader (see the on_exec_setup handler); the members of the
+    // group that are no longer descendants (ex: a process whose parent ended) are killed with it
+    if (!from_pid && getpgid(pid) == pid && pid != getpgrp()) {
+        ::kill(-pid, SIGKILL);
+    }
+
+    // the process itself is terminated as with terminate(), which waits for it
+    if (!terminate(xsink)) {
+        return false;
+    }
+
+#ifdef HAVE_PROCESS_TREE_SCAN
+    // returns when the descendants have ended
+    std::vector<process_tree_member> descendants(tree.begin() + 1, tree.end());
+    if (process_tree_wait(descendants, xsink)) {
+        return false;
+    }
+#endif
+    return true;
 }
 
 QoreStringNode* ProcessPriv::getCommandLine(int pid, ExceptionSink* xsink) {
