@@ -108,7 +108,9 @@ DLLLOCAL extern const TypedHashDecl* hashdeclSystemMemoryInfo;
 
 // issue #4293 #4303 it appears that there are race conditions in the Boost process library
 // handling I/O when starting processes, therefore we serialize process startup
-QoreThreadLock constructor_serializer;
+// the lock is recursive: the launch callbacks (on_setup, on_success, ...) run while it is held, and they can start
+// and destroy processes themselves
+QoreRecursiveThreadLock constructor_serializer;
 
 /** @defgroup process_constants Process Constants
     Constants related to process module functionality

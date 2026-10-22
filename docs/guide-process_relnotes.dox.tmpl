@@ -44,6 +44,8 @@
       searched in a consistent copy of \c PATH, while other threads change the environment with
       @ref Qore::setenv() "setenv()" or @ref Qore::unsetenv() "unsetenv()"; previously the environment was read
       without the lock that serializes these changes, which could crash the process.
+    - A launch callback (\c on_setup, \c on_success, \c on_error, \c on_fork_error) can start and destroy
+      processes itself; previously such a callback waited forever.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.

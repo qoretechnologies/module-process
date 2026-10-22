@@ -169,6 +169,7 @@ public class Main inherits QUnit::Test {
         addTestCase("an output stream is written under the sandbox of the code that started the process",
             \sandboxOutputStreamTest());
         addTestCase("results have their documented types", \resultTypesTest());
+        addTestCase("a launch callback can start a process", \callbackProcessTest());
         addTestCase("a child gets the environment changed with setenv()", \inheritedEnvironmentTest());
         addTestCase("the environment is copied consistently while other threads change it",
             \environmentChangeTest());
@@ -2017,6 +2018,23 @@ sub run(OutputStream stream) {
         p.wait();
         usage = p.getResourceUsage();
         assertEq("hash<ResourceUsageInfo>", usage.fullType());
+    }
+
+    # the launch callbacks run while process starts are serialized; a callback can start and destroy a process
+    # itself.  Previously the lock serializing the starts was not recursive, and the callback waited for itself forever
+    # (the test runner's time limit is only a guard).
+    callbackProcessTest() {
+        list<string> output = ();
+        code start = sub (hash<auto> e) {
+            Process p("sh", ("-c", sprintf("printf %s", e.name)));
+            p.wait();
+            output += p.readStdout(100);
+        };
+        {
+            Process p("sh", ("-c", "exit 0"), {"on_setup": start, "on_success": start});
+            p.wait();
+        }
+        assertEq(("on_setup", "on_success"), output);
     }
 
     # without the env option, a child gets a copy of the environment of this process, read under the environment lock
