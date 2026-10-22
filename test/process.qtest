@@ -43,7 +43,7 @@ class ThrowingOutputStream inherits OutputStream {
     }
 }
 
-#! an output stream that appends what is written to a file
+#! an output stream that appends what is written to a file; defined in the unrestricted test program
 class FileAppendOutputStream inherits OutputStream {
     private {
         string path;
@@ -166,6 +166,8 @@ public class Main inherits QUnit::Test {
         addTestCase("an output File stays open and owned by the caller", \outputFileOwnershipTest());
         addTestCase("an exception of an output stream is rethrown by wait()", \outputStreamExceptionTest());
         addTestCase("an output stream object given only in the options is written", \outputStreamObjectTest());
+        addTestCase("an output stream is written under the sandbox of the code that started the process",
+            \sandboxOutputStreamTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -1931,6 +1933,62 @@ auto sub descriptors() { return Process::getDescriptorCount(getpid()); }
             delete p;
         }
         assertEq("out\nagain\n", ReadOnlyFile::readTextFile(path));
+    }
+
+    # the output of a process started by sandboxed code is written to its output stream on the background I/O thread;
+    # the stream runs there under the sandbox of the code that started the process, as it does when that code writes
+    # to it itself.  Previously the I/O thread ran without any sandbox, so a stream that the sandbox forbade to write
+    # a file wrote it.
+    sandboxOutputStreamTest() {
+        string denied = tmp_location() + DirSep + "process-sandbox-stream-" + get_random_string();
+        mkdir(denied, 0700);
+        on_exit {
+            unlink(denied + DirSep + "direct.txt");
+            unlink(denied + DirSep + "output.txt");
+            rmdir(denied);
+        }
+
+        SandboxManager sm();
+        sm.setFilesystemDefaultPolicy(True);
+        sm.addFilesystemDeniedPath(denied);
+        Program p(PO_NO_CHILD_PO_RESTRICTIONS);
+        p.setSandboxManager(sm);
+        p.parse("%modern
+%requires process
+sub write_direct(OutputStream stream) {
+    stream.write(binary(\"direct\"));
+}
+sub run(OutputStream stream) {
+    Process proc(\"sh\", (\"-c\", \"echo sandboxed\"), {\"stdout\": stream});
+    proc.wait();
+}
+", "sandbox-stream-test");
+
+        # the stream class is defined in this unrestricted program; called by the sandboxed code, it is governed by
+        # the sandbox of its caller
+        string direct = denied + DirSep + "direct.txt";
+        assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(),
+            ("write_direct", new FileAppendOutputStream(direct)), "the sandboxed code writes to the stream");
+        assertFalse(is_file(direct), "the stream did not write the file for the sandboxed code");
+
+        # the same stream given for the output of a process that the sandboxed code starts is written on the I/O
+        # thread; the exception raised there is rethrown when the process is waited for
+        string output = denied + DirSep + "output.txt";
+        *hash<ExceptionInfo> err;
+        try {
+            p.callFunction("run", new FileAppendOutputStream(output));
+        } catch (hash<ExceptionInfo> ex) {
+            err = ex;
+        }
+        assertEq("FILESYSTEM-ACCESS-DENIED", err.err, "the output stream was written under the sandbox");
+        assertFalse(is_file(output), "the output stream did not write the file outside the sandbox");
+
+        # without a sandbox, the same stream writes the output
+        {
+            Process proc("sh", ("-c", "echo unrestricted"), {"stdout": new FileAppendOutputStream(output)});
+            proc.wait();
+        }
+        assertEq("unrestricted\n", ReadOnlyFile::readTextFile(output), "the stream wrote the output");
     }
 
     getExecutablePathTest() {

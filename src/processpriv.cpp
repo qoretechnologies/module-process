@@ -1067,6 +1067,10 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
         m_err_buf.setEnded();
     }
 
+    // the output streams given run Qore code on the I/O thread, which serves only this object: they are governed by
+    // the sandbox of the code that starts the process, as if it had started the thread with q_start_thread()
+    m_sandbox.reset(new QoreSandboxCapture);
+
     // increment counter before launching thread
     stream_cnt.inc();
 
@@ -1078,6 +1082,7 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
     m_asio_ctx_run_future = std::async(std::launch::async, [this, &started]{
         q_register_foreign_thread();
         ON_BLOCK_EXIT(q_deregister_foreign_thread);
+        QoreSandboxCaptureHelper sch(*m_sandbox);
 
         m_out_buf.reassignThread();
         m_err_buf.reassignThread();

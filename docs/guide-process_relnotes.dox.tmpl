@@ -28,6 +28,9 @@
       the process writes to it, so the caller does not have to keep a reference to it; previously such an object
       given only in the options was deleted when the constructor returned, and each write failed with
       \c OBJECT-ALREADY-DELETED.
+    - The output streams given for a process are written under the @ref sandboxing "sandbox" of the code that
+      started the process, as when that code writes to them itself; previously the background thread that writes
+      the output ran them without any sandbox.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.

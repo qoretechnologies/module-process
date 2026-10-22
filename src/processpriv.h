@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unistd.h>
@@ -621,6 +622,13 @@ private:
 
     //! Async context required for async IO.
     boost::asio::io_context m_asio_ctx;
+
+    //! The sandbox of the code that started the process, which governs the background I/O thread
+    /** The thread is not started with q_start_thread(), so it does not inherit the sandbox of the code that starts
+        it; the output streams given run Qore code on it (ex: a Qore-language OutputStream subclass).  Declared
+        before @ref m_asio_ctx_run_future, so it is destroyed after the thread has been joined.
+    */
+    std::unique_ptr<QoreSandboxCapture> m_sandbox;
 
     //! Async context future required for running the context in new thread.
     std::future<void> m_asio_ctx_run_future;
