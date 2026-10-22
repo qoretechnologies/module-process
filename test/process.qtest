@@ -178,6 +178,7 @@ public class Main inherits QUnit::Test {
         addTestCase("Process::getEnvironment() returns the current environment", \getEnvironmentTest());
         addTestCase("the environment is copied consistently while other threads change it",
             \environmentChangeTest());
+        addTestCase("the end of a process is reported by its I/O thread", \endReportTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -846,6 +847,28 @@ public class Main inherits QUnit::Test {
             assertTrue(Process::checkPid(getpid()));
         } else {
             assertThrows("PROCESS-CHECKPID-UNSUPPORTED-ERROR", \Process::checkPid(), -10);
+        }
+    }
+
+    # while the background I/O thread of a process waits for its end, it alone reaps the child: Process::wait(),
+    # Process::running() and Process::terminate() wait for its report or check the child without reaping it.
+    # Previously they reaped the child themselves, racing with the I/O thread (a data race on the exit status reported
+    # by ThreadSanitizer in Process::wait()), and terminate() could report 128 + SIGKILL instead of SIGKILL.
+    endReportTest() {
+        for (int i = 0; i < 20; ++i) {
+            Process p(getTestValue("testSleep"), 5, {"path": (m_prefix,)});
+            assertTrue(p.running(), "the process runs");
+            p.terminate();
+            assertFalse(p.running(), "the process has ended");
+            assertEq(SIGKILL, p.exitCode(), "the exit code of a killed process");
+            p.wait();
+            assertEq(SIGKILL, p.exitCode(), "the exit code after the wait");
+        }
+        for (int i = 0; i < 20; ++i) {
+            Process p("sh", ("-c", "exit 3"));
+            p.wait();
+            assertFalse(p.running(), "the process has ended");
+            assertEq(3, p.exitCode(), "the exit code of the process");
         }
     }
 

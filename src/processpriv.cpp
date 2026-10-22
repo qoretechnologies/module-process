@@ -1170,6 +1170,8 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
         std::unique_lock<std::mutex> lock(mtx_process_status);
         assert(!running_flag);
         running_flag = true;
+        // the I/O thread, started below, reaps the child
+        io_running = true;
     }
 
     // create async read operations; output redirected to a file is never read into the buffer
@@ -1217,6 +1219,7 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
             bool registered = q_register_foreign_thread() == QFT_OK;
             if (!registered && (m_out_buf.hasStream() || m_err_buf.hasStream())) {
                 unregistered = true;
+                setIoEnded();
                 signal_started();
                 stream_cnt.dec(nullptr);
                 return;
@@ -1254,6 +1257,8 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
                 m_out_buf.setEnded();
                 m_err_buf.setEnded();
             }
+            // the child is no longer waited for here
+            setIoEnded();
             signal_started();
 
             m_out_buf.unassignThread();
@@ -1264,6 +1269,7 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
         });
     } catch (const std::exception& ex) {
         // the thread was not started: nothing waits for it
+        setIoEnded();
         stream_cnt.dec(nullptr);
         xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "cannot start the thread that reads the output of the "
             "process: %s", ex.what());
@@ -1306,6 +1312,25 @@ void ProcessPriv::setExitCode(boost::system::error_code ec, int e) {
     }
 }
 
+void ProcessPriv::setIoEnded() {
+    std::unique_lock<std::mutex> lock(mtx_process_status);
+    io_running = false;
+    if (process_status_waiting) {
+        cond_process_status.notify_all();
+    }
+}
+
+bool ProcessPriv::waitForEndReport(std::unique_lock<std::mutex>& lock) {
+    if (running_flag && io_running) {
+        ++process_status_waiting;
+        cond_process_status.wait(lock, [this] {
+            return !running_flag || !io_running;
+        });
+        --process_status_waiting;
+    }
+    return running_flag;
+}
+
 int ProcessPriv::exitCode(ExceptionSink* xsink) {
     if (!processCheck(xsink)) {
         return -1;
@@ -1343,7 +1368,7 @@ bool ProcessPriv::running(ExceptionSink* xsink) {
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mtx_process_status);
+    std::unique_lock<std::mutex> lock(mtx_process_status);
     if (exit_code != -1) {
         return false;
     }
@@ -1380,6 +1405,45 @@ bool ProcessPriv::running(ExceptionSink* xsink) {
         // evaluated as for a process that is not detached: the exit status, or the signal that ended it
         exit_code = bp::evaluate_exit_code(code);
 
+        return false;
+    }
+
+    // the I/O thread reaps the child and reports its end: whether the child has ended is found without reaping it,
+    // which would race with the I/O thread
+    if (io_running) {
+        if (!running_flag) {
+            return false;
+        }
+        int pid = m_process->id();
+        siginfo_t info;
+        memset(&info, 0, sizeof info);
+        while (::waitid(P_PID, static_cast<id_t>(pid), &info, WEXITED | WNOHANG | WNOWAIT) == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+            // ECHILD: the child has already been reaped (ex: with Process::terminate(int))
+            if (errno == ECHILD) {
+                return false;
+            }
+            xsink->raiseErrnoException("PROCESS-RUNNING-ERROR", errno, "cannot check process with PID %d", pid);
+            return false;
+        }
+        // si_pid is set if the child has ended; then the end reported by the I/O thread, which reaps it at once, is
+        // waited for, so that its exit code is known when it is reported as not running
+        if (!info.si_pid) {
+            return true;
+        }
+        try {
+            if (waitForEndReport(lock)) {
+                // the I/O thread no longer waits for the child: it is reaped below
+                lock.unlock();
+                boost::system::error_code ec;
+                m_process->wait(ec);
+                getExitCode(xsink);
+            }
+        } catch (const std::exception& ex) {
+            xsink->raiseException("PROCESS-RUNNING-ERROR", "cannot check process with PID %d: %s", pid, ex.what());
+        }
         return false;
     }
 
@@ -1511,17 +1575,23 @@ bool ProcessPriv::wait(ExceptionSink* xsink) {
                 return false;
             }
         } else {
-            boost::system::error_code ec;
-            m_process->wait(ec);
-            if (ec && ec != std::errc::no_child_process) {
-                xsink->raiseException("PROCESS-WAIT-ERROR", "cannot wait on process: %s", ec.message().c_str());
-                return false;
+            bool reap;
+            {
+                std::unique_lock<std::mutex> lock(mtx_process_status);
+                reap = waitForEndReport(lock);
+            }
+            // the I/O thread no longer waits for the child, so it is reaped here
+            if (reap) {
+                boost::system::error_code ec;
+                m_process->wait(ec);
+                if (ec && ec != std::errc::no_child_process) {
+                    xsink->raiseException("PROCESS-WAIT-ERROR", "cannot wait on process: %s", ec.message().c_str());
+                    return false;
+                }
             }
 
-            if (exit_code == -1) {
-                // get exit code if possible
-                getExitCode(xsink);
-            }
+            // get exit code if possible
+            getExitCode(xsink);
         }
 
         // rethrows any background exceptions
@@ -1582,6 +1652,8 @@ bool ProcessPriv::wait(int64 t, ExceptionSink* xsink) {
                 return false;
             }
         }
+        // the I/O thread, which finalizeStreams() waits for, takes the lock when it ends
+        lock.unlock();
         // rethrows any background exceptions
         finalizeStreams(xsink);
         return true;
@@ -1769,6 +1841,26 @@ bool ProcessPriv::terminate(ExceptionSink* xsink) {
     int pid = m_process->id();
     if (pid <= 0) {
         xsink->raiseException("PROCESS-TERMINATE-ERROR", "cannot terminate invalid process (pid=%d)", pid);
+        return false;
+    }
+
+    // while the I/O thread waits for the child, the child is killed here and reaped there
+    try {
+        std::unique_lock<std::mutex> lock(mtx_process_status);
+        if (io_running && running_flag) {
+            if (::kill(pid, SIGKILL) == -1 && errno != ESRCH) {
+                int err = errno;
+                lock.unlock();
+                xsink->raiseException("PROCESS-TERMINATE-ERROR", "Cannot terminate process: %s", strerror(err));
+                return false;
+            }
+            if (!waitForEndReport(lock)) {
+                return true;
+            }
+            // the I/O thread no longer waits for the child: it is reaped below
+        }
+    } catch (const std::exception& ex) {
+        xsink->raiseException("PROCESS-TERMINATE-ERROR", "Cannot terminate process: %s", ex.what());
         return false;
     }
 

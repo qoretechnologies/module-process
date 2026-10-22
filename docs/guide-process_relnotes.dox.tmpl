@@ -19,6 +19,11 @@
       attached by its PID is reported running while it runs; previously it was reported ended.  A detached process
       ended by a signal reports the signal as its exit code, as a process that is not detached does; previously it
       reported 0.
+    - @ref Qore::Process::Process::wait() "wait()", @ref Qore::Process::Process::running() "running()" and
+      @ref Qore::Process::Process::terminate() "terminate()" no longer collect the end of the child themselves while
+      the background thread of the process waits for it, and \c terminate() reports \c SIGKILL as the exit code of the
+      killed process; previously both threads could collect it at the same time, and \c terminate() could report
+      128 + \c SIGKILL.
     - A \c File object given for the \c stdout or \c stderr option stays open and owned by the caller, and the same
       \c File object can be given for both options; the redirection no longer leaks memory.
     - An exception raised by an \c OutputStream given for the \c stdout or \c stderr option is rethrown when the

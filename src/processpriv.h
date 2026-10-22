@@ -739,6 +739,25 @@ private:
     //! Running flag; lock: mtx_process_status, cond: cond_process_status
     bool running_flag = false;
 
+    //! True while the background I/O thread runs the asio context, in which the child is waited for
+    /** While it is set, only the I/O thread reaps the child, with the asynchronous wait of the process object, which
+        reports the end with setExitCode(); other threads wait for the report (waitForEndReport()): the process object
+        is not thread-safe, and its synchronous waits (wait(), running(), terminate()) would reap the child and write
+        its exit status while the I/O thread does.  lock: mtx_process_status, cond: cond_process_status
+    */
+    bool io_running = false;
+
+    //! Waits until the I/O thread has reported the end of the child, or no longer runs the asio context
+    /** @param lock holds mtx_process_status
+
+        @return true if the child must still be reaped by the caller: the I/O thread no longer runs and has not
+        reported its end
+    */
+    DLLLOCAL bool waitForEndReport(std::unique_lock<std::mutex>& lock);
+
+    //! Called by the I/O thread when it no longer runs the asio context
+    DLLLOCAL void setIoEnded();
+
     //! The PID of a detached process; 0 if the process has not been detached
     int detached_pid = 0;
 
