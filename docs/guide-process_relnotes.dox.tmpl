@@ -40,6 +40,10 @@
       @ref Qore::Process::ProcessResult "ProcessResult" and @ref Qore::Process::ResourceUsageInfo "ResourceUsageInfo"
       hashes that they are declared with; previously they returned untyped hashes, and assigning the result to a
       variable of the declared type raised \c RUNTIME-TYPE-ERROR.
+    - A process started without the \c env option gets a consistent copy of the environment, and the command is
+      searched in a consistent copy of \c PATH, while other threads change the environment with
+      @ref Qore::setenv() "setenv()" or @ref Qore::unsetenv() "unsetenv()"; previously the environment was read
+      without the lock that serializes these changes, which could crash the process.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.

@@ -169,6 +169,9 @@ public class Main inherits QUnit::Test {
         addTestCase("an output stream is written under the sandbox of the code that started the process",
             \sandboxOutputStreamTest());
         addTestCase("results have their documented types", \resultTypesTest());
+        addTestCase("a child gets the environment changed with setenv()", \inheritedEnvironmentTest());
+        addTestCase("the environment is copied consistently while other threads change it",
+            \environmentChangeTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -2014,6 +2017,93 @@ sub run(OutputStream stream) {
         p.wait();
         usage = p.getResourceUsage();
         assertEq("hash<ResourceUsageInfo>", usage.fullType());
+    }
+
+    # without the env option, a child gets a copy of the environment of this process, read under the environment lock
+    # that setenv() and unsetenv() take, and the command is searched in the PATH of this process
+    inheritedEnvironmentTest() {
+        string name = "QORE_PROCESS_ENV_" + get_random_string();
+        on_exit unsetenv(name);
+
+        assertEq(0, setenv(name, "changed with setenv()"));
+        hash<ProcessResult> r = Process::run("sh", ("-c", sprintf("printf %%s \"${%s}\"", name)));
+        assertEq("changed with setenv()", r.stdout, "the child got the variable set");
+
+        assertEq(0, unsetenv(name));
+        r = Process::run("sh", ("-c", sprintf("printf %%s \"${%s-unset}\"", name)));
+        assertEq("unset", r.stdout, "the child did not get the variable removed");
+
+        # a command found only in a directory added to the PATH with setenv()
+        string dir = tmp_location() + DirSep + "process-env-path-" + get_random_string();
+        mkdir(dir, 0700);
+        string cmd = "qore-process-env-test-" + get_random_string();
+        string cmd_path = dir + DirSep + cmd;
+        on_exit {
+            unlink(cmd_path);
+            rmdir(dir);
+        }
+        {
+            File f();
+            f.open2(cmd_path, O_CREAT | O_WRONLY | O_TRUNC, 0700);
+            f.write("#!/bin/sh\nprintf found\n");
+        }
+        string old_path = ENV.PATH;
+        on_exit setenv("PATH", old_path);
+        assertThrows("PROCESS-SEARCH-PATH-ERROR", sub () { Process p(cmd); });
+        assertEq(0, setenv("PATH", dir + ":" + old_path));
+        assertEq(cmd_path, Process::searchPath(cmd), "the command was found in the PATH set");
+        r = Process::run(cmd);
+        assertEq("found", r.stdout, "the command found in the PATH set ran");
+    }
+
+    # threads add, change and remove variables of the environment while children are started, which copies the
+    # environment: a change can reallocate the array of the environment and free the strings it replaces, so the
+    # copy is made under the environment lock that setenv() and unsetenv() take.  Previously the copy was made
+    # without it; the failure (a read of freed memory) is shown by valgrind or a crash, not deterministically.
+    environmentChangeTest() {
+        string prefix = sprintf("QORE_PROCESS_ENV_CHANGE_%d_", getpid());
+        string stable = prefix + "STABLE";
+        assertEq(0, setenv(stable, "stable"));
+        on_exit unsetenv(stable);
+
+        int writers = 3;
+        int children = 20;
+        Counter writers_done(writers);
+        bool stop;
+        Queue errors();
+        for (int w = 0; w < writers; ++w) {
+            background sub (int w) {
+                on_exit writers_done.dec();
+                try {
+                    for (int i = 0; !stop; ++i) {
+                        string name = sprintf("%s%d_%d", prefix, w, i % 50);
+                        setenv(name, strmul("v", 64 + i % 64));
+                        if (i % 3) {
+                            unsetenv(name);
+                        }
+                    }
+                } catch (hash<ExceptionInfo> ex) {
+                    errors.push(ex);
+                }
+            }(w);
+        }
+        on_exit {
+            stop = True;
+            writers_done.waitForZero();
+            for (int w = 0; w < writers; ++w) {
+                for (int i = 0; i < 50; ++i) {
+                    unsetenv(sprintf("%s%d_%d", prefix, w, i));
+                }
+            }
+        }
+
+        for (int i = 0; i < children; ++i) {
+            hash<ProcessResult> r = Process::run("sh", ("-c", sprintf("printf %%s \"${%s}\"", stable)));
+            assertEq("stable", r.stdout, sprintf("child %d got the environment", i));
+        }
+        stop = True;
+        writers_done.waitForZero();
+        assertEq(0, errors.size(), "the writers had no errors");
     }
 
     getExecutablePathTest() {

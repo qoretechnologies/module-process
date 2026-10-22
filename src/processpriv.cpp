@@ -625,8 +625,10 @@ env_t ProcessPriv::optsEnv(const QoreHashNode* opts, ExceptionSink* xsink) {
         return ret;
     }
 
+    // copy the environment variables from the current process; the environment lock keeps another thread from
+    // changing the environment (which can free the strings and the array read here) while it is copied
+    QoreEnvironmentReadLock env_lock;
     for (const auto& i : bp::environment::current()) {
-        // copy the environment variables from the current process
         ret[i.key()] = i.value();
     }
     return ret;
@@ -801,7 +803,14 @@ boost::filesystem::path ProcessPriv::optsPath(const char* command, const QoreHas
 
             ret = bp::environment::find_executable(command, my_env);
         } else {
-            ret = bp::environment::find_executable(command);
+            // the search path of the current process is copied under the environment lock: the search reads it
+            // while it checks the files found, which is not done with the lock held
+            QoreEnvironmentValue path("PATH");
+            std::unordered_map<bp::environment::key, bp::environment::value> my_env;
+            if (path) {
+                my_env.emplace("PATH", bp::environment::value(path.c_str()));
+            }
+            ret = bp::environment::find_executable(command, my_env);
         }
     } catch (std::runtime_error& ex) {
         xsink->raiseException("PROCESS-SEARCH-PATH-ERROR", ex.what());
