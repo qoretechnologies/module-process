@@ -722,9 +722,9 @@ int ProcessPriv::optsStdout(const char* keyName, const QoreHashNode* opts, Excep
                     }
                     stream->unassignThread(xsink);
                     if (!strcmp(keyName, "stdout")) {
-                        m_out_buf.setStream(stream.release());
+                        m_out_buf.setStream(stream.release(), obj);
                     } else {
-                        m_err_buf.setStream(stream.release());
+                        m_err_buf.setStream(stream.release(), obj);
                     }
                     return -1;
                 } else {
@@ -1239,6 +1239,9 @@ void ProcessPriv::finalizeStreams(ExceptionSink* xsink) {
 
     ReferenceHolder<OutputStream> out(xsink);
     ReferenceHolder<OutputStream> err(xsink);
+    // the objects of the streams are released outside the lock, since their destructors can run Qore code
+    ReferenceHolder<QoreObject> out_obj(xsink);
+    ReferenceHolder<QoreObject> err_obj(xsink);
 
     {
         AutoLocker al(bg_lck);
@@ -1248,6 +1251,8 @@ void ProcessPriv::finalizeStreams(ExceptionSink* xsink) {
 
         out = m_out_buf.finalize(xsink);
         err = m_err_buf.finalize(xsink);
+        out_obj = m_out_buf.takeStreamObject();
+        err_obj = m_err_buf.takeStreamObject();
     }
 }
 

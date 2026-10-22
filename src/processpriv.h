@@ -353,6 +353,10 @@ private:
         DLLLOCAL OutputBuffer& operator=(const OutputBuffer& other) = delete;
         DLLLOCAL ~OutputBuffer() {
             m_timeout_sync.notify_all();
+            if (stream_obj) {
+                ExceptionSink xs;
+                stream_obj->deref(&xs);
+            }
         }
 
         //! Returns true if the buffer has an input stream
@@ -360,10 +364,25 @@ private:
             return (bool)stream;
         }
 
-        DLLLOCAL void setStream(OutputStream* stream) {
+        //! Sets the stream, which must be the private data of the given object
+        /** The object is kept until the stream is released with finalize() and takeStreamObject(): a stream
+            implemented in Qore runs the methods of its object when it is written to, so the object must exist even
+            if the caller keeps no reference to it
+        */
+        DLLLOCAL void setStream(OutputStream* stream, QoreObject* obj) {
             assert(stream);
             assert(!this->stream);
+            assert(!stream_obj);
             this->stream = stream;
+            obj->ref();
+            stream_obj = obj;
+        }
+
+        //! Returns the object of the stream, which the caller dereferences, or nullptr if there is none
+        DLLLOCAL QoreObject* takeStreamObject() {
+            QoreObject* rv = stream_obj;
+            stream_obj = nullptr;
+            return rv;
         }
 
         DLLLOCAL OutputStream* finalize(ExceptionSink* xsink) {
@@ -558,6 +577,8 @@ private:
 
         BackgroundExceptionSink* bg_xsink;
         PrivateDataRefHolder<OutputStream> stream;
+        //! The object of the stream (referenced), or nullptr
+        QoreObject* stream_obj = nullptr;
 
         //! Read data from buffer in to the destination. Expects that mutex is locked.
         DLLLOCAL size_t doRead(char* dest, size_t n) {

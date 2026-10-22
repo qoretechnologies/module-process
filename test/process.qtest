@@ -43,6 +43,26 @@ class ThrowingOutputStream inherits OutputStream {
     }
 }
 
+#! an output stream that appends what is written to a file
+class FileAppendOutputStream inherits OutputStream {
+    private {
+        string path;
+    }
+
+    constructor(string path) {
+        self.path = path;
+    }
+
+    write(binary bin) {
+        File f();
+        f.open2(path, O_CREAT | O_WRONLY | O_APPEND);
+        f.write(bin);
+    }
+
+    close() {
+    }
+}
+
 public class Main inherits QUnit::Test {
     private {
         # prefix to find other test scripts
@@ -145,6 +165,7 @@ public class Main inherits QUnit::Test {
         addTestCase("a wait on a detached or attached process ends with a cancellation", \waitUnwatchedCancelTest());
         addTestCase("an output File stays open and owned by the caller", \outputFileOwnershipTest());
         addTestCase("an exception of an output stream is rethrown by wait()", \outputStreamExceptionTest());
+        addTestCase("an output stream object given only in the options is written", \outputStreamObjectTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -1884,6 +1905,32 @@ auto sub descriptors() { return Process::getDescriptorCount(getpid()); }
             assertThrows("STREAM-TEST-ERROR", "write refused", \p.wait());
             assertEq("out\n", p.readStdout(100));
         }
+    }
+
+    # a stream implemented in Qore runs the methods of its object when it is written to; the object is kept while the
+    # process uses the stream.  Previously only the stream was kept: an object given only in the options was deleted
+    # when the constructor returned, and each write failed with OBJECT-ALREADY-DELETED.
+    outputStreamObjectTest() {
+        string path = tmp_location() + DirSep + "process-stream-object-" + get_random_string();
+        on_exit {
+            unlink(path);
+            unlink(path + ".err");
+        }
+        {
+            Process p("sh", ("-c", "echo out; echo err >&2"), {
+                "stdout": new FileAppendOutputStream(path),
+                "stderr": new FileAppendOutputStream(path + ".err"),
+            });
+            p.wait();
+            assertEq("out\n", ReadOnlyFile::readTextFile(path));
+            assertEq("err\n", ReadOnlyFile::readTextFile(path + ".err"));
+        }
+        # the object is also released when the process object is deleted without a wait
+        {
+            Process p("sh", ("-c", "echo again"), {"stdout": new FileAppendOutputStream(path)});
+            delete p;
+        }
+        assertEq("out\nagain\n", ReadOnlyFile::readTextFile(path));
     }
 
     getExecutablePathTest() {

@@ -24,6 +24,10 @@
     - An exception raised by an \c OutputStream given for the \c stdout or \c stderr option is rethrown when the
       process is waited for, as documented; previously it could stop a debug build of %Qore, and it left the
       exception state of the waiting thread inconsistent.
+    - An \c OutputStream object implemented in %Qore and given for the \c stdout or \c stderr option is kept while
+      the process writes to it, so the caller does not have to keep a reference to it; previously such an object
+      given only in the options was deleted when the constructor returned, and each write failed with
+      \c OBJECT-ALREADY-DELETED.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.
