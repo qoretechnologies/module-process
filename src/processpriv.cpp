@@ -1078,35 +1078,86 @@ void ProcessPriv::launchChild(ExceptionSink* xsink,
     // we wait until the I/O thread is running before continuing
     QoreCounter started(1);
 
+    // set by the I/O thread before it signals its start if it cannot write to the output streams given
+    bool unregistered = false;
+
     // launch async operations
-    m_asio_ctx_run_future = std::async(std::launch::async, [this, &started]{
-        q_register_foreign_thread();
-        ON_BLOCK_EXIT(q_deregister_foreign_thread);
-        QoreSandboxCaptureHelper sch(*m_sandbox);
+    try {
+        m_asio_ctx_run_future = std::async(std::launch::async, [this, &started, &unregistered] {
+            // the thread that starts the process waits until this thread has started, however its start ends
+            bool signaled = false;
+            auto signal_started = [&started, &signaled] () {
+                if (!signaled) {
+                    signaled = true;
+                    started.dec(nullptr);
+                }
+            };
 
-        m_out_buf.reassignThread();
-        m_err_buf.reassignThread();
+            // the output streams run Qore code, which needs a thread registered with Qore; without them, the
+            // thread only copies the output to the buffers
+            bool registered = q_register_foreign_thread() == QFT_OK;
+            if (!registered && (m_out_buf.hasStream() || m_err_buf.hasStream())) {
+                unregistered = true;
+                signal_started();
+                stream_cnt.dec(nullptr);
+                return;
+            }
+            ON_BLOCK_EXIT([registered] () {
+                if (registered) {
+                    q_deregister_foreign_thread();
+                }
+            });
+            QoreSandboxCaptureHelper sch(*m_sandbox);
 
-        try {
-            // do one non-blocking poll to ensure that everything is in place
-            m_asio_ctx.poll_one();
-            // signal the parent thread that background I/O is up and running
-            started.dec(nullptr);
-            // run the background I/O in blocking mode in the dedicated I/O thread
-            m_asio_ctx.run();
-        } catch (const std::exception& ex) {
-            printd(0, "exception in m_asio_ctx.run() in m_asio_ctx_run_future: %s", ex.what());
-        }
+            m_out_buf.reassignThread();
+            m_err_buf.reassignThread();
 
-        m_out_buf.unassignThread();
-        m_err_buf.unassignThread();
+            try {
+                // do one non-blocking poll to ensure that everything is in place
+                m_asio_ctx.poll_one();
+                // signal the parent thread that background I/O is up and running
+                signal_started();
+                // run the background I/O in blocking mode in the dedicated I/O thread
+                m_asio_ctx.run();
+            } catch (const std::exception& ex) {
+                printd(0, "exception in m_asio_ctx.run() in m_asio_ctx_run_future: %s", ex.what());
+                if (registered) {
+                    ExceptionSink xs;
+                    xs.raiseException("PROCESS-IO-ERROR", "the output of the process can no longer be read: %s",
+                        ex.what());
+                    bg_xsink.take(xs);
+                }
+                // the output is no longer read: the child gets an error when it writes instead of waiting for a
+                // reader, and readers waiting for more output return
+                boost::system::error_code ec;
+                m_out_pipe.close(ec);
+                m_err_pipe.close(ec);
+                m_out_buf.setEnded();
+                m_err_buf.setEnded();
+            }
+            signal_started();
 
-        // signal that the I/O thread has terminated
+            m_out_buf.unassignThread();
+            m_err_buf.unassignThread();
+
+            // signal that the I/O thread has terminated
+            stream_cnt.dec(nullptr);
+        });
+    } catch (const std::exception& ex) {
+        // the thread was not started: nothing waits for it
         stream_cnt.dec(nullptr);
-    });
+        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "cannot start the thread that reads the output of the "
+            "process: %s", ex.what());
+        return;
+    }
 
     // wait for background I/O to be up and running before continuing
     started.waitForZero(nullptr);
+
+    if (unregistered) {
+        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "cannot register the thread that writes the output of the "
+            "process to the output streams given with Qore");
+    }
 }
 
 void ProcessPriv::setExitCode(boost::system::error_code ec, int e) {

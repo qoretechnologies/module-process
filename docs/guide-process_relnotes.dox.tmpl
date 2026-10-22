@@ -31,6 +31,10 @@
     - The output streams given for a process are written under the @ref sandboxing "sandbox" of the code that
       started the process, as when that code writes to them itself; previously the background thread that writes
       the output ran them without any sandbox.
+    - A failure to start or register the background thread that reads the output of a process raises
+      \c PROCESS-CONSTRUCTOR-ERROR, and a failure of that thread while it reads the output raises
+      \c PROCESS-IO-ERROR when the process is waited for; previously the constructor could wait forever, or the
+      output streams could be written on a thread unknown to %Qore.
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.
