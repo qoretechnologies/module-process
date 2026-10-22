@@ -351,12 +351,17 @@ p.wait();
     @section process_options Process Options
 
     The \c opts argument can take the following keys; all keys are optional:
-    - \c env: replace current process's ENV with a hash of env variables.
-      Use @code ENV + ( "FOO" : "bar") @endcode is you want to merge parent's ENV to child
+    - \c env: a hash of the environment variables of the child, which replaces the environment that it would get
+      otherwise.  Without this option, the child gets a copy of the current environment of this process, including
+      the changes made with @ref Qore::setenv() "setenv()" and @ref Qore::unsetenv() "unsetenv()".  To give the child
+      the current environment with changes, use @ref Qore::Process::Process::getEnvironment()
+      "Process::getEnvironment()": @code{.py} "env": Process::getEnvironment() + {"FOO": "bar"} @endcode
+      The \c ENV hash is not suitable for this: it is a copy of the environment made when %Qore started, which does
+      not contain the changes made since
     - \c cwd: a string with initial "current working directory",
       a dir which child should take as its initial work dir
     - \c path: a list of strings. It's a custom search path to find \c command
-      in the Process constructors. If it's not given, parent's ENV PATH is used.
+      in the Process constructors. If it's not given, the \c PATH of the current environment is used.
       This value is not passed to child's ENV at all.
     - \c stdout: an opened %Qore \c File or \c OutputStream object; standard output of the process will be redirected
       to this object.  A \c File object stays open and owned by the caller: the child writes to its own copy of the
@@ -997,6 +1002,25 @@ int Process::getDescriptorCount() {
         return QoreValue();
     }
     return ProcessPriv::getDescriptorCount(xsink, pid);
+}
+
+//! Returns the current environment of this process
+/** Unlike the \c ENV hash, which is a copy of the environment made when %Qore started, the hash returned contains
+    the changes made with @ref Qore::setenv() "setenv()" and @ref Qore::unsetenv() "unsetenv()" since; it is read
+    under the lock that serializes changes to the environment, so it is a consistent copy.
+
+    @return a hash of the environment variables of this process
+
+    @par Example:
+    @code{.py}
+# the child gets the current environment and one more variable
+Process p("printenv", {"env": Process::getEnvironment() + {"MY_VAR": "value"}});
+    @endcode
+
+    @since process 2.2
+*/
+static hash<string, string> Process::getEnvironment() [flags=RET_VALUE_ONLY;dom=EXTERNAL_INFO] {
+    return ProcessPriv::getEnvironment(xsink);
 }
 
 //! Search for full path of command in current process's PATH

@@ -53,6 +53,11 @@
       stops the parent's child process; previously a wait for it in the child waited forever, deleting it stopped the
       parent's child, and on platforms where the end of a child is watched with \c SIGCHLD (macOS and the BSDs), a
       child that started processes could take the notifications of the parent, whose waits could then wait forever.
+    - Added @ref Qore::Process::Process::getEnvironment() "Process::getEnvironment()", which returns the current
+      environment, to give a child the current environment with changes (\c "env": Process::getEnvironment() + {...});
+      the documentation recommended the \c ENV hash for this, which is a copy of the environment made when %Qore
+      started and lacks the changes made since with @ref Qore::setenv() "setenv()" and
+      @ref Qore::unsetenv() "unsetenv()".
     - Added the opt-in \c kill_on_parent_exit option on Linux. A child can now be bound to its launching
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.

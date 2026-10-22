@@ -175,6 +175,7 @@ public class Main inherits QUnit::Test {
         addTestCase("a Process object of the parent cannot be used in a child created with fork()",
             \forkInheritedObjectTest());
         addTestCase("a child gets the environment changed with setenv()", \inheritedEnvironmentTest());
+        addTestCase("Process::getEnvironment() returns the current environment", \getEnvironmentTest());
         addTestCase("the environment is copied consistently while other threads change it",
             \environmentChangeTest());
 
@@ -671,7 +672,7 @@ public class Main inherits QUnit::Test {
     envVarsTest() {
         hash<auto> opts_p = {
             "path": (m_prefix,),
-            "env": ENV,
+            "env": Process::getEnvironment(),
         };
 
         {
@@ -1487,21 +1488,24 @@ public class Main inherits QUnit::Test {
 
         # Test with spaces in arguments
         {
-            Process p("test_env.q", ("SPECIAL_VAR", "value with spaces"), opts + {"env": ENV + {"SPECIAL_VAR": "value with spaces"}});
+            Process p("test_env.q", ("SPECIAL_VAR", "value with spaces"),
+                opts + {"env": Process::getEnvironment() + {"SPECIAL_VAR": "value with spaces"}});
             p.wait();
             assertEq(0, p.exitCode(), "Spaces in args should work");
         }
 
         # Test with quotes in arguments
         {
-            Process p("test_env.q", ("QUOTE_VAR", "value\"with\"quotes"), opts + {"env": ENV + {"QUOTE_VAR": "value\"with\"quotes"}});
+            Process p("test_env.q", ("QUOTE_VAR", "value\"with\"quotes"),
+                opts + {"env": Process::getEnvironment() + {"QUOTE_VAR": "value\"with\"quotes"}});
             p.wait();
             assertEq(0, p.exitCode(), "Quotes in args should work");
         }
 
         # Test with unicode in arguments
         {
-            Process p("test_env.q", ("UNICODE_VAR", "\u00e9\u00e8\u00ea"), opts + {"env": ENV + {"UNICODE_VAR": "\u00e9\u00e8\u00ea"}});
+            Process p("test_env.q", ("UNICODE_VAR", "\u00e9\u00e8\u00ea"),
+                opts + {"env": Process::getEnvironment() + {"UNICODE_VAR": "\u00e9\u00e8\u00ea"}});
             p.wait();
             assertEq(0, p.exitCode(), "Unicode in args should work");
         }
@@ -2169,6 +2173,38 @@ sub run(OutputStream stream) {
         assertEq(cmd_path, Process::searchPath(cmd), "the command was found in the PATH set");
         r = Process::run(cmd);
         assertEq("found", r.stdout, "the command found in the PATH set ran");
+    }
+
+    # Process::getEnvironment() returns the current environment, including the changes made with setenv() and
+    # unsetenv(), so that a child can be given the current environment with changes; the ENV hash is a copy of the
+    # environment made when Qore started, which a child given "ENV + {...}" got instead
+    getEnvironmentTest() {
+        string name = "QORE_PROCESS_GETENV_" + get_random_string();
+        on_exit unsetenv(name);
+
+        hash<string, string> env = Process::getEnvironment();
+        assertEq("hash<string, string>", env.fullType());
+        assertEq(getenv("PATH"), env.PATH, "the environment has the PATH");
+        assertFalse(env.hasKey(name), "the variable is not set yet");
+
+        assertEq(0, setenv(name, "set after startup"));
+        env = Process::getEnvironment();
+        assertEq("set after startup", env{name}, "the variable set with setenv() is returned");
+        assertFalse(ENV.hasKey(name), "ENV is a copy of the environment made when Qore started");
+
+        # a child given the current environment with changes gets both
+        string cmd = sprintf("printf '%%s|%%s' \"${%s}\" \"${QORE_PROCESS_ADDED}\"", name);
+        hash<ProcessResult> r = Process::run("sh", ("-c", cmd),
+            {"env": Process::getEnvironment() + {"QORE_PROCESS_ADDED": "added"}});
+        assertEq("set after startup|added", r.stdout, "the child got the current environment with the change");
+
+        assertEq(0, unsetenv(name));
+        assertFalse(Process::getEnvironment().hasKey(name), "the variable removed with unsetenv() is not returned");
+
+        # the method is in the external information domain
+        Program p(PO_NEW_STYLE | PO_NO_EXTERNAL_INFO);
+        assertThrows("PARSE-EXCEPTION", \p.parse(), ("%requires process\nProcess::getEnvironment();",
+            "get-environment-test"));
     }
 
     # threads add, change and remove variables of the environment while children are started, which copies the

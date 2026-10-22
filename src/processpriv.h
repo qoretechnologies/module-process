@@ -171,6 +171,9 @@ public:
 
     DLLLOCAL static boost::filesystem::path optsPath(const char* command, const QoreHashNode* opts, ExceptionSink* xsink);
 
+    //! Returns the current environment as a hash, read under the environment lock
+    DLLLOCAL static QoreHashNode* getEnvironment(ExceptionSink* xsink);
+
     DLLLOCAL static QoreHashNode* getMemorySummaryInfo(int pid, ExceptionSink* xsink);
 
     DLLLOCAL static bool checkPid(int pid, ExceptionSink* xsink);

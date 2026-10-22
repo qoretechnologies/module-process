@@ -713,6 +713,21 @@ env_t ProcessPriv::optsEnv(const QoreHashNode* opts, ExceptionSink* xsink) {
     return ret;
 }
 
+QoreHashNode* ProcessPriv::getEnvironment(ExceptionSink* xsink) {
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(stringTypeInfo), xsink);
+    // the environment lock keeps another thread from changing the environment while it is copied
+    QoreEnvironmentReadLock env_lock;
+    for (const auto& i : bp::environment::current()) {
+        std::string key = i.key().string();
+        // the first definition of a variable is the one that getenv() returns
+        if (rv->existsKey(key.c_str())) {
+            continue;
+        }
+        rv->setKeyValue(key.c_str(), new QoreStringNode(i.value().string()), xsink);
+    }
+    return rv.release();
+}
+
 std::string ProcessPriv::optsCwd(const QoreHashNode* opts, ExceptionSink* xsink) {
     std::string ret(".");
 
