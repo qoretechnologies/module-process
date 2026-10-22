@@ -32,6 +32,11 @@
 
 #include "unix-config.h"
 
+#include <qore/QoreForkHandler.h>
+
+#include <atomic>
+#include <pthread.h>
+
 #ifdef HAVE_SYS_LOADAVG_H
 #include <sys/types.h>
 #include <sys/loadavg.h>
@@ -110,7 +115,65 @@ DLLLOCAL extern const TypedHashDecl* hashdeclSystemMemoryInfo;
 // handling I/O when starting processes, therefore we serialize process startup
 // the lock is recursive: the launch callbacks (on_setup, on_success, ...) run while it is held, and they can start
 // and destroy processes themselves
-QoreRecursiveThreadLock constructor_serializer;
+static QoreRecursiveThreadLock constructor_serializer;
+
+// the thread that holds constructor_serializer, valid while constructor_serializer_holds is not 0
+static std::atomic<pthread_t> constructor_serializer_holder;
+// how often the thread in constructor_serializer_holder holds constructor_serializer
+static std::atomic<unsigned> constructor_serializer_holds{0};
+
+// holds constructor_serializer and records the holder for the fork handler of the lock
+class ConstructorSerializerHelper {
+public:
+    DLLLOCAL ConstructorSerializerHelper() {
+        constructor_serializer.lock();
+        if (!constructor_serializer_holds.load(std::memory_order_relaxed)) {
+            constructor_serializer_holder.store(pthread_self(), std::memory_order_relaxed);
+        }
+        constructor_serializer_holds.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    DLLLOCAL ~ConstructorSerializerHelper() {
+        constructor_serializer_holds.fetch_sub(1, std::memory_order_relaxed);
+        constructor_serializer.unlock();
+    }
+
+    ConstructorSerializerHelper(const ConstructorSerializerHelper&) = delete;
+    ConstructorSerializerHelper& operator=(const ConstructorSerializerHelper&) = delete;
+};
+
+// the child fork handler of constructor_serializer (see QoreForkHandler.h): the lock is held while the launch
+// callbacks (user code) run and while the destructor waits for the background I/O thread, so fork() does not wait for
+// it (QFR_MODULE_RESET); the child initializes it again, unlocked, and takes it again as often as the forking thread
+// held it, since the launcher itself forks while it is held and a callback can call fork(); a hold of another thread
+// of the parent does not exist in the child.  The handler runs in the child, where only the forking thread exists:
+// it takes no lock but its own, and allocates no memory.
+static void constructor_serializer_fork_child(void*) {
+    unsigned holds = constructor_serializer_holds.load(std::memory_order_relaxed);
+    qore_fork_reinit_recursive_thread_lock(constructor_serializer);
+    if (!holds || !pthread_equal(constructor_serializer_holder.load(std::memory_order_relaxed), pthread_self())) {
+        constructor_serializer_holds.store(0, std::memory_order_relaxed);
+        return;
+    }
+    for (unsigned i = 0; i < holds; ++i) {
+        constructor_serializer.lock();
+    }
+}
+
+// the registration of the fork handler of constructor_serializer
+static QoreForkHandlerRegistration* constructor_serializer_fork_reg = nullptr;
+
+int process_register_fork_handlers() {
+    assert(!constructor_serializer_fork_reg);
+    constructor_serializer_fork_reg = qore_register_fork_handler(QFR_MODULE_RESET, "process_constructor_serializer",
+        nullptr, nullptr, constructor_serializer_fork_child, nullptr);
+    return constructor_serializer_fork_reg ? 0 : -1;
+}
+
+void process_unregister_fork_handlers() {
+    qore_unregister_fork_handler(constructor_serializer_fork_reg);
+    constructor_serializer_fork_reg = nullptr;
+}
 
 /** @defgroup process_constants Process Constants
     Constants related to process module functionality
@@ -410,7 +473,7 @@ Process::constructor(int pid) [flags=NAMED_ARGS] {
     \c boost::process
  */
 Process::constructor(string command) [flags=NAMED_ARGS] {
-    AutoLocker al(constructor_serializer);
+    ConstructorSerializerHelper csh;
     try {
         self->setPrivate(CID_PROCESS, new ProcessPriv(command->c_str(), 0, 0, xsink));
     } catch (const std::exception& ex) {
@@ -431,7 +494,7 @@ Process::constructor(string command) [flags=NAMED_ARGS] {
     \c boost::process
  */
 Process::constructor(string command, hash<auto> options) {
-    AutoLocker al(constructor_serializer);
+    ConstructorSerializerHelper csh;
     try {
         self->setPrivate(CID_PROCESS, new ProcessPriv(command->c_str(), 0, options, xsink));
     } catch (const std::exception& ex) {
@@ -451,7 +514,7 @@ Process::constructor(string command, hash<auto> options) {
     \c boost::process
  */
 Process::constructor(string command, softlist<softstring> arguments) {
-    AutoLocker al(constructor_serializer);
+    ConstructorSerializerHelper csh;
     try {
         self->setPrivate(CID_PROCESS, new ProcessPriv(command->c_str(), arguments, 0, xsink));
     } catch (const std::exception& ex) {
@@ -476,7 +539,7 @@ Process::constructor(string command, softlist<softstring> arguments) {
     \c boost::process
 */
 Process::constructor(string command, softlist<softstring> arguments, hash<auto> options) [flags=NAMED_ARGS] {
-    AutoLocker al(constructor_serializer);
+    ConstructorSerializerHelper csh;
     try {
         self->setPrivate(CID_PROCESS, new ProcessPriv(command->c_str(), arguments, options, xsink));
     } catch (const std::exception& ex) {
@@ -501,7 +564,7 @@ Process::copy() {
 */
 Process::destructor() {
     {
-        AutoLocker al(constructor_serializer);
+        ConstructorSerializerHelper csh;
         priv->destructor(xsink);
     }
     priv->deref();

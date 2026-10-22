@@ -33,12 +33,22 @@ DLLLOCAL const TypedHashDecl* hashdeclSystemMemoryInfo;
 
 DLLLOCAL QoreClass* initProcessClass(QoreNamespace& ns);
 
+// the fork handlers of the process-wide locks of the module (QC_Process.qpp)
+DLLLOCAL int process_register_fork_handlers();
+DLLLOCAL void process_unregister_fork_handlers();
+
 DLLLOCAL TypedHashDecl* init_hashdecl_MemorySummaryInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_ProcessResult(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_ResourceUsageInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_SystemMemoryInfo(QoreNamespace& ns);
 
 static void process_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
+    // registered in the initialization function and not while static objects are constructed (see QoreForkHandler.h)
+    if (process_register_fork_handlers()) {
+        xsink.outOfMemory();
+        return;
+    }
+
     hashdeclMemorySummaryInfo = init_hashdecl_MemorySummaryInfo(ProcessNS);
     hashdeclProcessResult = init_hashdecl_ProcessResult(ProcessNS);
     hashdeclResourceUsageInfo = init_hashdecl_ResourceUsageInfo(ProcessNS);
@@ -52,7 +62,7 @@ static void process_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, Excep
 }
 
 void process_module_delete() {
-   // nothing to do here in this case
+    process_unregister_fork_handlers();
 }
 
 extern "C" DLLEXPORT void process_qore_module_desc(QoreModuleInfo& mod_info) {

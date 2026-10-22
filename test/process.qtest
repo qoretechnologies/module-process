@@ -170,6 +170,8 @@ public class Main inherits QUnit::Test {
             \sandboxOutputStreamTest());
         addTestCase("results have their documented types", \resultTypesTest());
         addTestCase("a launch callback can start a process", \callbackProcessTest());
+        addTestCase("a child created while another thread starts a process can start processes",
+            \forkWhileStartingTest());
         addTestCase("a child gets the environment changed with setenv()", \inheritedEnvironmentTest());
         addTestCase("the environment is copied consistently while other threads change it",
             \environmentChangeTest());
@@ -2035,6 +2037,54 @@ sub run(OutputStream stream) {
             p.wait();
         }
         assertEq(("on_setup", "on_success"), output);
+    }
+
+    # a child process created with fork() while another thread holds the lock that serializes process starts (here in
+    # a launch callback) can start processes: the module's fork handler initializes the lock again in the child.
+    # Previously the child got the lock held by a thread that does not exist in it, and its first process start
+    # waited forever (the test runner's time limit is only a guard).
+    forkWhileStartingTest() {
+        if (!Option::HAVE_FORK) {
+            testSkip("fork() is not available");
+        }
+        string result = tmp_location() + DirSep + "process-fork-" + get_random_string();
+        on_exit unlink(result);
+
+        Queue in_callback();
+        Queue release();
+        Counter done(1);
+        background sub () {
+            on_exit done.dec();
+            Process p("sh", ("-c", "exit 0"), {"on_setup": sub (hash<auto> e) {
+                in_callback.push(True);
+                release.get();
+            }});
+            p.wait();
+        }();
+        # the other thread holds the lock while its callback waits
+        in_callback.get();
+        int pid = fork();
+        if (!pid) {
+            # the child: only this thread exists
+            int rc = 1;
+            try {
+                Process c("sh", ("-c", "exit 7"));
+                c.wait();
+                File f();
+                f.open2(result, O_CREAT | O_WRONLY | O_TRUNC);
+                f.printf("%d", c.exitCode());
+                rc = 0;
+            } catch (hash<ExceptionInfo> ex) {
+                rc = 2;
+            }
+            exit(rc);
+        }
+        release.push(True);
+        done.waitForZero();
+        assertGt(0, pid, "fork() succeeded");
+        Process child(pid);
+        child.wait();
+        assertEq("7", ReadOnlyFile::readTextFile(result), "the child started a process");
     }
 
     # without the env option, a child gets a copy of the environment of this process, read under the environment lock
