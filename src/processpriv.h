@@ -40,6 +40,12 @@
 #include <unordered_map>
 
 // boost
+// A child process is started with fork() and runs only async-signal-safe code until it executes the command: the
+// launcher must not notify the io_context of the fork, since the child's notification creates the reactor again
+// (descriptors, locks, allocation, and possible exceptions that would unwind the child's copy of the program); the
+// child never uses the context, and the parent's notifications do nothing for the services that the context has when
+// the child is started (the process handle and its signal set are created afterwards)
+#define BOOST_PROCESS_V2_DISABLE_NOTIFY_FORK 1
 #include <boost/asio.hpp>
 #include <boost/process.hpp>
 #include <boost/filesystem/path.hpp>
