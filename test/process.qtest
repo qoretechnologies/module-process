@@ -33,6 +33,16 @@ class MyOutputStream inherits OutputStream {
     }
 }
 
+#! an output stream whose writes fail
+class ThrowingOutputStream inherits OutputStream {
+    write(binary bin) {
+        throw "STREAM-TEST-ERROR", "write refused";
+    }
+
+    close() {
+    }
+}
+
 public class Main inherits QUnit::Test {
     private {
         # prefix to find other test scripts
@@ -134,6 +144,7 @@ public class Main inherits QUnit::Test {
         addTestCase("a detached process is tracked by its own PID", \detachedProcessTrackingTest());
         addTestCase("a wait on a detached or attached process ends with a cancellation", \waitUnwatchedCancelTest());
         addTestCase("an output File stays open and owned by the caller", \outputFileOwnershipTest());
+        addTestCase("an exception of an output stream is rethrown by wait()", \outputStreamExceptionTest());
 
         # Return for compatibility with test harness that checks return value.
         set_return_value(main());
@@ -1852,6 +1863,26 @@ auto sub descriptors() { return Process::getDescriptorCount(getpid()); }
             assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("exe",), "/proc/PID/exe");
             assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("cmdline",), "/proc/PID/cmdline");
             assertThrows("FILESYSTEM-ACCESS-DENIED", \p.callFunction(), ("descriptors",), "/proc/PID/fd");
+        }
+    }
+
+    # an exception raised by an output stream on the background I/O thread is rethrown in the thread that waits for
+    # the process.  Previously the I/O thread ended with the exception still counted as active on it, which stopped
+    # the process in a debug build of the library, and the thread that handled the exception released a count that
+    # it did not have.
+    outputStreamExceptionTest() {
+        ThrowingOutputStream stream();
+        {
+            Process p("sh", ("-c", "echo out"), {"stdout": stream});
+            assertThrows("STREAM-TEST-ERROR", "write refused", \p.wait());
+            # the exception is rethrown only once
+            assertTrue(p.wait());
+        }
+        # the stream also fails for standard error, while standard output is read
+        {
+            Process p("sh", ("-c", "echo out; echo err >&2"), {"stderr": stream});
+            assertThrows("STREAM-TEST-ERROR", "write refused", \p.wait());
+            assertEq("out\n", p.readStdout(100));
         }
     }
 

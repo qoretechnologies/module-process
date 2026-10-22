@@ -61,6 +61,28 @@ namespace bp = boost::process::v2;
 
 typedef std::unordered_map<bp::environment::key, bp::environment::value> env_t;
 
+//! The exceptions raised on the background I/O thread, rethrown in a thread that waits for the process
+/** An exception is counted as active on the thread that raises it until it is handled there.  The exceptions of this
+    sink are raised on the I/O thread and handled in another thread, so they are not counted on any thread: the I/O
+    thread raises them in a sink of its own and hands them over with take().  Raising them here directly would leave
+    them counted on the I/O thread, which ends with active exceptions (an assertion in debug builds of the library),
+    while the thread that handles them would release a count that it never had.
+*/
+class BackgroundExceptionSink : public ExceptionSink {
+public:
+    DLLLOCAL BackgroundExceptionSink() {
+        markExternallyManaged();
+    }
+
+    //! Takes the exceptions raised in the given sink on the current thread, which then no longer counts them
+    DLLLOCAL void take(ExceptionSink& xs) {
+        if (xs) {
+            xs.markExternallyManaged();
+            assimilate(xs);
+        }
+    }
+};
+
 class ProcessPriv : public AbstractPrivateData {
 public:
     DLLLOCAL ProcessPriv(pid_t pid, ExceptionSink* xsink);
@@ -236,7 +258,7 @@ private:
     //! Thread-safe input buffer. Used for writing to child process's stdin.
     class InputBuffer final {
     public:
-        DLLLOCAL InputBuffer(ExceptionSink* xsink) : bg_xsink(xsink), stream(bg_xsink)  {
+        DLLLOCAL InputBuffer(BackgroundExceptionSink* xsink) : bg_xsink(xsink), stream(bg_xsink)  {
         }
 
         DLLLOCAL InputBuffer(InputBuffer&& a) = delete;
@@ -289,7 +311,12 @@ private:
             if (stream) {
                 // FIXME: need support for async I/O with streams
                 dest.resize(n);
-                int64 size = stream->read(dest.data(), n, bg_xsink);
+                ExceptionSink xs;
+                int64 size = stream->read(dest.data(), n, &xs);
+                bg_xsink->take(xs);
+                if (size < 0) {
+                    size = 0;
+                }
                 dest.resize(size);
                 return (size_t) size;
             } else {
@@ -310,14 +337,14 @@ private:
         std::mutex m_mtx;
         std::string m_buf;
 
-        ExceptionSink* bg_xsink;
+        BackgroundExceptionSink* bg_xsink;
         PrivateDataRefHolder<InputStream> stream;
     };
 
     //! Thread-safe output buffer. Used for storing data from child process's stdout and stderr.
     class OutputBuffer final {
     public:
-        DLLLOCAL OutputBuffer(ExceptionSink* xsink) : bg_xsink(xsink), stream(bg_xsink) {
+        DLLLOCAL OutputBuffer(BackgroundExceptionSink* xsink) : bg_xsink(xsink), stream(bg_xsink) {
         }
 
         DLLLOCAL OutputBuffer(OutputBuffer&& a) = delete;
@@ -347,18 +374,25 @@ private:
             return stream.release();
         }
 
+        //! Assigns the stream to the background I/O thread; called on that thread
         DLLLOCAL void reassignThread() {
             if (stream && (stream->getThreadId() != q_gettid())) {
-                stream->reassignThread(bg_xsink);
-                if (*bg_xsink) {
-                    stream = nullptr;
+                ExceptionSink xs;
+                stream->reassignThread(&xs);
+                if (xs) {
+                    // the stream cannot be used on this thread
+                    stream.release()->deref(&xs);
                 }
+                bg_xsink->take(xs);
             }
         }
 
+        //! Releases the stream from the background I/O thread; called on that thread
         DLLLOCAL void unassignThread() {
             if (stream && (stream->getThreadId() == q_gettid())) {
-                stream->unassignThread(bg_xsink);
+                ExceptionSink xs;
+                stream->unassignThread(&xs);
+                bg_xsink->take(xs);
             }
         }
 
@@ -503,7 +537,9 @@ private:
                 return;
 
             if (stream) {
-                stream->write(src, n, bg_xsink);
+                ExceptionSink xs;
+                stream->write(src, n, &xs);
+                bg_xsink->take(xs);
             } else {
                 std::lock_guard<std::mutex> lock(m_mtx);
                 m_buf.append(src, n);
@@ -520,7 +556,7 @@ private:
         //! True when no more data will be appended
         bool m_ended = false;
 
-        ExceptionSink* bg_xsink;
+        BackgroundExceptionSink* bg_xsink;
         PrivateDataRefHolder<OutputStream> stream;
 
         //! Read data from buffer in to the destination. Expects that mutex is locked.
@@ -590,8 +626,8 @@ private:
     //! Mutex for bg_xsink and atomic char reads
     QoreThreadLock bg_lck;
 
-    //! Background exception sink
-    ExceptionSink bg_xsink;
+    //! The exceptions raised on the background I/O thread
+    BackgroundExceptionSink bg_xsink;
 
     //! Buffer containg data that should be written to child process's stdin.
     InputBuffer m_in_buf;
