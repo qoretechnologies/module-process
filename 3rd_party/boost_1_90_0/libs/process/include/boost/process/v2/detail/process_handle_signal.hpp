@@ -10,6 +10,21 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+// Qore patch: on the BSDs and macOS the end of the child is watched with a kqueue (EVFILT_PROC, NOTE_EXIT) instead of
+// SIGCHLD.  A process-directed SIGCHLD is delivered to only one thread, and any thread that accepts it without
+// running the handler of the signal set (for example one waiting for SIGCHLD with sigwait(), as the signal thread of
+// the Qore library does) takes it from the signal set; several children ending while a single SIGCHLD is pending
+// also raise it once.  A wait that missed the SIGCHLD of its child never ended, though the child was a zombie.
+#if !defined(BOOST_PROCESS_V2_DISABLE_SIGNALSET) && !defined(BOOST_PROCESS_V2_DISABLE_EXIT_KQUEUE) \
+    && (defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) \
+        || defined(__DragonFly__))
+#define BOOST_PROCESS_V2_EXIT_KQUEUE 1
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/event.h>
+#endif
+
 #include <boost/process/v2/detail/last_error.hpp>
 #include <boost/process/v2/detail/throw_error.hpp>
 #include <boost/process/v2/exit_code.hpp>
@@ -25,6 +40,9 @@
 #if !defined(BOOST_PROCESS_V2_DISABLE_SIGNALSET)
 #include <asio/signal_set.hpp>
 #endif
+#if defined(BOOST_PROCESS_V2_EXIT_KQUEUE)
+#include <asio/posix/basic_stream_descriptor.hpp>
+#endif
 #else
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/append.hpp>
@@ -34,6 +52,9 @@
 #include <boost/asio/post.hpp>
 #if !defined(BOOST_PROCESS_V2_DISABLE_SIGNALSET)
 #include <boost/asio/signal_set.hpp>
+#endif
+#if defined(BOOST_PROCESS_V2_EXIT_KQUEUE)
+#include <boost/asio/posix/basic_stream_descriptor.hpp>
 #endif
 #endif
 
@@ -72,21 +93,33 @@ struct basic_process_handle_signal
                                          net::execution_context &>::value
                          >::type * = nullptr)
             : pid_(-1), signal_set_(context, SIGCHLD)
+#if defined(BOOST_PROCESS_V2_EXIT_KQUEUE)
+            , exit_watch_(context)
+#endif
     {
     }
 
     basic_process_handle_signal(Executor executor)
             : pid_(-1), signal_set_(executor, SIGCHLD)
+#if defined(BOOST_PROCESS_V2_EXIT_KQUEUE)
+            , exit_watch_(executor)
+#endif
     {
     }
 
     basic_process_handle_signal(Executor executor, pid_type pid)
             : pid_(pid), signal_set_(executor, SIGCHLD)
+#if defined(BOOST_PROCESS_V2_EXIT_KQUEUE)
+            , exit_watch_(executor)
+#endif
     {
     }
 
     basic_process_handle_signal(basic_process_handle_signal && handle)
     : pid_(handle.pid_), signal_set_(handle.signal_set_.get_executor(), SIGCHLD)
+#if defined(BOOST_PROCESS_V2_EXIT_KQUEUE)
+    , exit_watch_(std::move(handle.exit_watch_))
+#endif
     {
         handle.pid_ = -1;
     }
@@ -102,6 +135,9 @@ struct basic_process_handle_signal
 #else
         signal_set_.executor = handle.signal_set_.executor;
 #endif
+#if defined(BOOST_PROCESS_V2_EXIT_KQUEUE)
+        exit_watch_ = std::move(handle.exit_watch_);
+#endif
         handle.pid_ = -1;
         return *this;
     }
@@ -110,6 +146,9 @@ struct basic_process_handle_signal
     template<typename Executor1>
     basic_process_handle_signal(basic_process_handle_signal<Executor1> && handle)
     : pid_(handle.pid_), signal_set_(Executor1(handle.signal_set_.get_executor()), SIGCHLD)
+#if defined(BOOST_PROCESS_V2_EXIT_KQUEUE)
+    , exit_watch_(std::move(handle.exit_watch_))
+#endif
     {
         handle.pid_ = -1;
     }
@@ -302,6 +341,139 @@ struct basic_process_handle_signal
     };
     signal_set_dummy_ signal_set_;
 #endif
+#if defined(BOOST_PROCESS_V2_EXIT_KQUEUE)
+    //! A kqueue that reports the end of the child (EVFILT_PROC, NOTE_EXIT); opened by async_wait()
+    net::posix::basic_stream_descriptor<Executor> exit_watch_;
+
+    //! Opens exit_watch_ for the child if it is not open
+    /** @return no error if the end of the child is watched, or if the child has already ended (ESRCH: it is a
+        zombie, or it has been reaped); otherwise the error
+    */
+    error_code open_exit_watch_()
+    {
+        error_code ec;
+        if (exit_watch_.is_open())
+            return ec;
+        int kq = ::kqueue();
+        if (kq == -1)
+            return get_last_error();
+        if (::fcntl(kq, F_SETFD, FD_CLOEXEC) == -1)
+        {
+            ec = get_last_error();
+            ::close(kq);
+            return ec;
+        }
+        struct kevent change;
+        EV_SET(&change, static_cast<uintptr_t>(pid_), EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
+        int rc;
+        while ((rc = ::kevent(kq, &change, 1, nullptr, 0, nullptr)) == -1 && errno == EINTR)
+            ;
+        if (rc == -1)
+        {
+            int err = errno;
+            ::close(kq);
+            // the child has already ended: waitpid() finds it without waiting
+            if (err != ESRCH)
+                BOOST_PROCESS_V2_ASSIGN_EC(ec, err, system_category());
+            return ec;
+        }
+        exit_watch_.assign(kq, ec);
+        if (ec)
+            ::close(kq);
+        return ec;
+    }
+
+    struct async_wait_op_
+    {
+        basic_process_handle_signal &handle;
+        pid_type pid_;
+        native_exit_code_type & exit_code;
+
+        template<typename Self>
+        void operator()(Self &&self)
+        {
+            self.reset_cancellation_state(asio::enable_total_cancellation());
+            error_code ec;
+            int wait_res = -1;
+            if (pid_ <= 0) // error, complete early
+                BOOST_PROCESS_V2_ASSIGN_EC(ec, net::error::bad_descriptor);
+            else if (process_is_running(exit_code))
+            {
+                // the end is watched before the child is checked, so that it cannot end unnoticed in between
+                ec = handle.open_exit_watch_();
+                if (!ec)
+                {
+                    while ((wait_res = ::waitpid(pid_, &exit_code, WNOHANG)) == -1 && errno == EINTR)
+                        ;
+                    if (wait_res == -1)
+                        ec = get_last_error();
+                    else if (wait_res == 0 && !handle.exit_watch_.is_open())
+                    {
+                        // ESRCH from kevent(), and yet the child has not ended: it is not a child of this process
+                        BOOST_PROCESS_V2_ASSIGN_EC(ec, ECHILD, system_category());
+                    }
+                }
+            }
+            if (!ec && (wait_res == 0))
+            {
+                handle.exit_watch_.async_wait(net::posix::descriptor_base::wait_read, std::move(self));
+                return;
+            }
+
+            close_watch_();
+            struct completer
+            {
+                error_code ec;
+                typename std::decay<Self>::type self;
+
+                void operator()()
+                {
+                    self.complete(ec);
+                }
+            };
+            net::dispatch(
+                net::get_associated_immediate_executor(self, handle.exit_watch_.get_executor()),
+                completer{ec, std::move(self)});
+        }
+
+        template<typename Self>
+        void operator()(Self &&self, error_code ec)
+        {
+            // NOTE_EXIT has been reported: the child has ended, and becomes a zombie at once if it is not one yet
+            if (!ec && process_is_running(exit_code))
+            {
+                while (::waitpid(pid_, &exit_code, 0) == -1)
+                {
+                    if (errno != EINTR)
+                    {
+                        ec = get_last_error();
+                        break;
+                    }
+                }
+            }
+            close_watch_();
+            self.complete(ec);
+        }
+
+        void close_watch_()
+        {
+            error_code ignored;
+            handle.exit_watch_.close(ignored);
+        }
+    };
+ public:
+    template<BOOST_PROCESS_V2_COMPLETION_TOKEN_FOR(void(error_code))
+             WaitHandler = net::default_completion_token_t<executor_type>>
+    auto async_wait(native_exit_code_type & exit_code,
+                    WaitHandler &&handler = net::default_completion_token_t<executor_type>())
+      -> decltype(net::async_compose<WaitHandler, void(error_code)>(
+                    async_wait_op_{*this, pid_, exit_code}, handler, exit_watch_))
+    {
+        return net::async_compose<WaitHandler, void(error_code)>(
+                async_wait_op_{*this, pid_, exit_code}, handler, exit_watch_);
+    }
+};
+#else // BOOST_PROCESS_V2_EXIT_KQUEUE
     struct async_wait_op_
     {
 #if !defined(BOOST_PROCESS_V2_DISABLE_SIGNALSET)
@@ -377,6 +549,7 @@ struct basic_process_handle_signal
                 async_wait_op_{signal_set_, pid_, exit_code}, handler, signal_set_);
     }
 };
+#endif // BOOST_PROCESS_V2_EXIT_KQUEUE
 
 }
 

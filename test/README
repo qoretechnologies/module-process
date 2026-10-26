@@ -12,4 +12,13 @@ including removal after opening the stat file. It also checks zombie/dead states
 permission errors, an unavailable proc filesystem, malformed data and live states.
 It affects only the test process's own stat lookup and is never installed.
 
+On Linux and macOS, check that the end of a child is reported when no SIGCHLD reaches a signal handler,
+as when another thread of the process takes it, in every execution mode:
+
+    python3 -B -W error test/run-sigchld-lost.py --module build/process-api-2.0.qmod
+    python3 -B -W error test/run-sigchld-lost.py --module build/process-api-2.0.qmod --valgrind
+
+The test interposer (sigchld-lost-fixture.c, preloaded) drops every SIGCHLD before it reaches the
+handler that was installed.
+
 The other *.q files are supporting helpers for I/O and environment handling.

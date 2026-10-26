@@ -1,0 +1,96 @@
+#!/usr/bin/env qore
+# Copyright 2026 Qore Technologies, s.r.o.; SPDX-License-Identifier: MIT
+# Run by run-sigchld-lost.py with sigchld-lost-fixture.c preloaded: no SIGCHLD reaches a handler, as if another
+# thread had taken every one (see the fixture).  The end of a child is still reported, and the child is reaped once.
+
+%modern
+
+%requires process
+%requires QUnit
+
+%exec-class SigchldLostTest
+
+class SigchldLostTest inherits QUnit::Test {
+    public {
+        #! a bound for a wait that must end at once; a wait that missed the end of its child never ends
+        const Bound = 60s;
+        #! the number of children that end together
+        const Together = 16;
+    }
+
+    constructor() : QUnit::Test("SigchldLost", "1.0") {
+        addTestCase("wait", \waitTest());
+        addTestCase("timed wait", \timedWaitTest());
+        addTestCase("children ending together", \togetherTest());
+        addTestCase("running", \runningTest());
+        addTestCase("terminate", \terminateTest());
+        set_return_value(main());
+    }
+
+    #! wait() returns once the child has ended, with its exit code; the child is reaped
+    waitTest() {
+        Process p("/bin/sh", ("-c", "exit 3"));
+        int pid = p.id();
+        p.wait();
+        assertEq(3, p.exitCode());
+        assertFalse(p.running());
+        # reaped: no zombie is left
+        assertFalse(Process::checkPid(pid));
+    }
+
+    #! wait(timeout) reports the end of the child
+    timedWaitTest() {
+        Process p("/bin/sh", ("-c", "exit 4"));
+        assertTrue(p.wait(Bound));
+        assertEq(4, p.exitCode());
+        assertFalse(Process::checkPid(p.id()));
+    }
+
+    #! children that end together while their waits are pending are all reported, each with its own exit code
+    togetherTest() {
+        # every child waits for a line on its stdin; a line is written to each once all waits are pending
+        list<Process> pl = map new Process("/bin/sh", ("-c", "read x; exit " + $1)), xrange(Together);
+        Counter pending(Together);
+        Counter done(Together);
+        list<auto> results = ();
+        Mutex m();
+        for (int i = 0; i < Together; ++i) {
+            background sub (int i) {
+                on_exit done.dec();
+                pending.dec();
+                bool ended = pl[i].wait(Bound);
+                m.lock();
+                on_exit m.unlock();
+                results[i] = {"ended": ended, "code": pl[i].exitCode()};
+            }(i);
+        }
+        pending.waitForZero();
+        map $1.write("\n"), pl;
+        done.waitForZero();
+        for (int i = 0; i < Together; ++i) {
+            assertEq({"ended": True, "code": i}, results[i], "child " + i);
+            assertFalse(Process::checkPid(pl[i].id()), "child " + i + " reaped");
+        }
+    }
+
+    #! running() is false once the child has ended, and the exit code is known
+    runningTest() {
+        Process p("/bin/sh", ("-c", "read x; exit 5"));
+        assertTrue(p.running());
+        p.write("\n");
+        assertTrue(p.wait(Bound));
+        assertFalse(p.running());
+        assertEq(5, p.exitCode());
+    }
+
+    #! terminate() returns once the child has been killed
+    terminateTest() {
+        Process p("/bin/sh", ("-c", "read x"));
+        int pid = p.id();
+        assertTrue(p.running());
+        p.terminate();
+        assertFalse(p.running());
+        assertEq(SIGKILL, p.exitCode());
+        assertFalse(Process::checkPid(pid));
+    }
+}
