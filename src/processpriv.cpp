@@ -434,7 +434,7 @@ ProcessPriv::ProcessPriv(pid_t pid, ExceptionSink* xsink) :
         m_out_buf.setEnded();
         m_err_buf.setEnded();
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", ex.what());
+        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "%s", ex.what());
     }
 }
 
@@ -621,7 +621,7 @@ ProcessPriv::ProcessPriv(const char* command, const QoreListNode* arguments, con
         launchChild(xsink, effectivePath, exeArgs, env, cwd.c_str(), stdoutFD, stderrFD, opts, setNice, niceValue,
             limits, killOnParentExit);
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", ex.what());
+        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "%s", ex.what());
     }
 
     // stop async I/O thread immediately before obliteration if an exception was thrown
@@ -913,7 +913,7 @@ boost::filesystem::path ProcessPriv::optsPath(const char* command, const QoreHas
             ret = bp::environment::find_executable(command, my_env);
         }
     } catch (std::runtime_error& ex) {
-        xsink->raiseException("PROCESS-SEARCH-PATH-ERROR", ex.what());
+        xsink->raiseException("PROCESS-SEARCH-PATH-ERROR", "%s", ex.what());
     	return ret;
     }
 
@@ -934,7 +934,7 @@ boost::filesystem::path ProcessPriv::optsPath(const char* command, const QoreHas
         }
         return ret;
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-DIRECTORY-ERROR", ex.what());
+        xsink->raiseException("PROCESS-DIRECTORY-ERROR", "%s", ex.what());
         return ret;
     }
 }
@@ -1348,7 +1348,7 @@ int ProcessPriv::id(ExceptionSink* xsink) {
     try {
         return detached_pid ? detached_pid : m_process->id();
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-ID-ERROR", ex.what());
+        xsink->raiseException("PROCESS-ID-ERROR", "%s", ex.what());
     }
 
     return -1;
@@ -1536,7 +1536,7 @@ void ProcessPriv::getExitCode(ExceptionSink* xsink) {
     try {
         exit_code = m_process->exit_code();
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-EXITCODE-ERROR", ex.what());
+        xsink->raiseException("PROCESS-EXITCODE-ERROR", "%s", ex.what());
     }
 }
 
@@ -1599,7 +1599,7 @@ bool ProcessPriv::wait(ExceptionSink* xsink) {
         return true;
     } catch (const std::exception& ex) {
         const char* err = ex.what();
-        xsink->raiseException("PROCESS-WAIT-ERROR", err);
+        xsink->raiseException("PROCESS-WAIT-ERROR", "%s", err);
     }
 
     return false;
@@ -1659,7 +1659,7 @@ bool ProcessPriv::wait(int64 t, ExceptionSink* xsink) {
         return true;
     } catch (const std::exception& ex) {
         const char* err = ex.what();
-        xsink->raiseException("PROCESS-WAIT-ERROR", err);
+        xsink->raiseException("PROCESS-WAIT-ERROR", "%s", err);
     }
 
     return false;
@@ -1767,7 +1767,7 @@ bool ProcessPriv::detach(ExceptionSink* xsink) {
         detached_pid = pid;
     } catch (const std::exception& ex) {
         const char* err = ex.what();
-        xsink->raiseException("PROCESS-WAIT-ERROR", err);
+        xsink->raiseException("PROCESS-WAIT-ERROR", "%s", err);
         return false;
     }
     // the background handler does not report the end of a detached process; one attached by its PID has the
@@ -1902,7 +1902,7 @@ QoreStringNode* ProcessPriv::readStderr(size_t n, ExceptionSink* xsink) {
         if (read)
             return getString(str.release());
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-READ-ERROR", ex.what());
+        xsink->raiseException("PROCESS-READ-ERROR", "%s", ex.what());
     }
 
     return nullptr;
@@ -1923,7 +1923,7 @@ QoreStringNode* ProcessPriv::readStderrTimeout(size_t n, int64 millis, Exception
         if (read)
             return getString(str.release());
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-READ-ERROR", ex.what());
+        xsink->raiseException("PROCESS-READ-ERROR", "%s", ex.what());
     }
 
     return nullptr;
@@ -1944,7 +1944,7 @@ QoreStringNode* ProcessPriv::readStdout(size_t n, ExceptionSink* xsink) {
         if (read)
             return getString(str.release());
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-READ-ERROR", ex.what());
+        xsink->raiseException("PROCESS-READ-ERROR", "%s", ex.what());
     }
 
     return nullptr;
@@ -1965,7 +1965,7 @@ QoreStringNode* ProcessPriv::readStdoutTimeout(size_t n, int64 millis, Exception
         if (read)
             return getString(str.release());
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-READ-ERROR", ex.what());
+        xsink->raiseException("PROCESS-READ-ERROR", "%s", ex.what());
     }
 
     return nullptr;
@@ -1986,7 +1986,7 @@ BinaryNode* ProcessPriv::readStderrBinary(size_t n, ExceptionSink* xsink) {
         if (read)
             return bin.release();
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-READ-ERROR", ex.what());
+        xsink->raiseException("PROCESS-READ-ERROR", "%s", ex.what());
     }
 
     return nullptr;
@@ -2007,7 +2007,7 @@ BinaryNode* ProcessPriv::readStderrBinaryTimeout(size_t n, int64 millis, Excepti
         if (read)
             return bin.release();
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-READ-ERROR", ex.what());
+        xsink->raiseException("PROCESS-READ-ERROR", "%s", ex.what());
     }
 
     return nullptr;
@@ -2028,7 +2028,7 @@ BinaryNode* ProcessPriv::readStdoutBinary(size_t n, ExceptionSink* xsink) {
         if (read)
             return bin.release();
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-READ-ERROR", ex.what());
+        xsink->raiseException("PROCESS-READ-ERROR", "%s", ex.what());
     }
 
     return nullptr;
@@ -2049,7 +2049,7 @@ BinaryNode* ProcessPriv::readStdoutBinaryTimeout(size_t n, int64 millis, Excepti
         if (read)
             return bin.release();
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-READ-ERROR", ex.what());
+        xsink->raiseException("PROCESS-READ-ERROR", "%s", ex.what());
     }
 
     return nullptr;

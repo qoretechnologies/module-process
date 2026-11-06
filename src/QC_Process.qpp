@@ -480,7 +480,7 @@ Process::constructor(int pid) [flags=NAMED_ARGS] {
     try {
         self->setPrivate(CID_PROCESS, new ProcessPriv(pid, xsink));
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", ex.what());
+        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "%s", ex.what());
     }
 }
 
@@ -499,7 +499,7 @@ Process::constructor(string command) [flags=NAMED_ARGS] {
     try {
         self->setPrivate(CID_PROCESS, new ProcessPriv(command->c_str(), 0, 0, xsink));
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", ex.what());
+        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "%s", ex.what());
     }
 }
 
@@ -520,7 +520,7 @@ Process::constructor(string command, hash<auto> options) {
     try {
         self->setPrivate(CID_PROCESS, new ProcessPriv(command->c_str(), 0, options, xsink));
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", ex.what());
+        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "%s", ex.what());
     }
 }
 
@@ -540,7 +540,7 @@ Process::constructor(string command, softlist<softstring> arguments) {
     try {
         self->setPrivate(CID_PROCESS, new ProcessPriv(command->c_str(), arguments, 0, xsink));
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", ex.what());
+        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "%s", ex.what());
     }
 }
 
@@ -565,7 +565,7 @@ Process::constructor(string command, softlist<softstring> arguments, hash<auto> 
     try {
         self->setPrivate(CID_PROCESS, new ProcessPriv(command->c_str(), arguments, options, xsink));
     } catch (const std::exception& ex) {
-        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", ex.what());
+        xsink->raiseException("PROCESS-CONSTRUCTOR-ERROR", "%s", ex.what());
     }
 }
 

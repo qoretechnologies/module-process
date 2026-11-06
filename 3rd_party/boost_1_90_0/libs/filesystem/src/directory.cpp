@@ -42,8 +42,10 @@
 #include <memory>
 #include <boost/scope/unique_fd.hpp>
 
+// Darwin's readdir is thread-safe for separate directory streams; readdir_r is deprecated.
 #if defined(_POSIX_THREAD_SAFE_FUNCTIONS) && (_POSIX_THREAD_SAFE_FUNCTIONS >= 0) && defined(_SC_THREAD_SAFE_FUNCTIONS) && \
     !defined(__CYGWIN__) && \
+    !defined(__APPLE__) && \
     !(defined(linux) || defined(__linux) || defined(__linux__)) && \
     !defined(__ANDROID__) && \
     (!defined(__hpux) || defined(_REENTRANT)) && \
