@@ -5,6 +5,8 @@
     @tableofcontents
 
     @section process_v2_2 process v2.2
+    - Boost.Process v2 closes inherited descriptors automatically. Remove the obsolete <tt>close_fds</tt> option.
+    - <tt>Process::getDescriptorCount()</tt> reports the number of open file descriptors for a process.
     - On macOS and the BSDs, the end of a child is watched with a kernel event of the process instead of the
       \c SIGCHLD signal, so @ref Qore::Process::Process::wait() "wait()",
       @ref Qore::Process::Process::running() "running()" and @ref Qore::Process::Process::terminate() "terminate()"
@@ -46,11 +48,6 @@
       \c PROCESS-CONSTRUCTOR-ERROR, and a failure of that thread while it reads the output raises
       \c PROCESS-IO-ERROR when the process is waited for; previously the constructor could wait forever, or the
       output streams could be written on a thread unknown to %Qore.
-    - @ref Qore::Process::Process::run() "Process::run()", @ref Qore::Process::Process::pipeline() "Process::pipeline()"
-      and @ref Qore::Process::Process::getResourceUsage() "Process::getResourceUsage()" return the
-      @ref Qore::Process::ProcessResult "ProcessResult" and @ref Qore::Process::ResourceUsageInfo "ResourceUsageInfo"
-      hashes that they are declared with; previously they returned untyped hashes, and assigning the result to a
-      variable of the declared type raised \c RUNTIME-TYPE-ERROR.
     - A process started without the \c env option gets a consistent copy of the environment, and the command is
       searched in a consistent copy of \c PATH, while other threads change the environment with
       @ref Qore::setenv() "setenv()" or @ref Qore::unsetenv() "unsetenv()"; previously the environment was read
@@ -77,7 +74,6 @@
       thread's lifetime so it cannot continue running after that thread or its process exits abruptly.
       Existing launches retain their previous behavior unless the option is enabled.
 
-    @section process_v2_1 process v2.1
     - Documentation builds use public Qore declarations with current CMake and Doxygen.
 
     <b>New Features:</b>
@@ -119,7 +115,6 @@
       working directory read, searching the path only returns programs that may be read, and inspecting processes
       and the system through \c /proc requires read access; processes that a sandbox hides are skipped when
       processes are scanned, and long scans can be cancelled
-    - fixed leaking the output files given for a process that is not started because the call was cancelled
     - fixed undefined behavior and a crash on Linux in
       @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" when the command line of the
       process is empty, as for kernel threads and for a process while it is executing a new program
@@ -138,37 +133,19 @@
       the command was not found: the pre-allocated result string was leaked when the underlying
       lookup raised an exception
     - added PID validation in sendSignal() and terminate() to reject PIDs <= 0
-    - added safety check in getChildPids() to reject PID 1 (init) and invalid PIDs
     - child processes now run in their own process group (setpgid) to isolate signals
     - child processes now start with no blocked signals and with the default action for \c SIGPIPE; they
       inherited the signal mask of the calling Qore thread, which blocks signals, so a child without its own
       handlers could not be stopped with \c SIGTERM, and they inherited Qore's ignored \c SIGPIPE
-    - patched boost::process v1 terminate.hpp to add pid <= 0 validation (matching v2 behavior)
-    - fixed empty code block in terminate() when handling ECHILD errors
-    - fixed getDescriptorCount() signature inconsistency on unsupported platforms
     - fixed FILE* handle cleanup on constructor errors
     - improved error handling when fdopen() fails for stdout/stderr redirection
 
     <b>Safety Improvements:</b>
-    - all child processes now run in their own process group, preventing signals sent to the
-      child's process group from affecting the parent process
-    - PID validation prevents accidental operations on system processes (PID 1) or invalid PIDs
-    - getChildPids() refuses to enumerate children of PID 1 to prevent accidental system-wide operations
-
-    <b>Documentation:</b>
-    - documented the \c encoding option in process options
-    - documented the \c shell, \c nice, and \c limits options
-    - added comprehensive platform support documentation
-
-    @section process_v2_0 process v2.0
-    - updated to use Boost.Process v2.0
-    - removed the \c close_fds option; it's automatic with Boost.Process v2.0
-    - added Process::getDescriptorCount() to get the number of open file descriptors for a process
 
     @section process_v1_1_1 process v1.1.1
     - use <tt>/proc/PID/smaps_rollup</tt> if available to get private memory size on Linux which results in reliable
       private memory size info as well as much faster and more efficient execution on Linux
-      (<a href="https://github.com/qorelanguage/qore/issues/4980">issue 4980</a>)
+      (<a href="https://github.com/qoretechnologies/qore/issues/4980">issue 4980</a>)
 
     @section process_v1_1_0 process v1.1.0
     - added the \c close_fds option
@@ -179,19 +156,19 @@
     @section process_v1_0_4 process v1.0.4
     - added missing exception handling to @ref Qore::Process::Process::constructor() "Process::constructor()" to avoid
       a crash due to unhandled C++ exceptions due to resource errors starting processes
-      (<a href="https://github.com/qorelanguage/qore/issues/4384">issue 4384</a>)
+      (<a href="https://github.com/qoretechnologies/qore/issues/4384">issue 4384</a>)
     - added serialization to all variants of @ref Qore::Process::Process::constructor() "Process::constructor()" and
       @ref Qore::Process::Process::destructor() "Process::destructor()" to address race conditions in the underlying
       \c boost::process library
-      (<a href="https://github.com/qorelanguage/qore/issues/4303">issue 4303</a> and
-      <a href="https://github.com/qorelanguage/qore/issues/4293">issue 4293</a>)
+      (<a href="https://github.com/qoretechnologies/qore/issues/4303">issue 4303</a> and
+      <a href="https://github.com/qoretechnologies/qore/issues/4293">issue 4293</a>)
 
     @section process_v1_0_3 process v1.0.3
     - fixed a race condition with async I/O in process handled that could result in a
       <tt>PROCESS-CONSTRUCTOR-ERROR: dup2() failed</tt> exception when starting processes
-      (<a href="https://github.com/qorelanguage/qore/issues/4303">issue 4303</a>)
+      (<a href="https://github.com/qoretechnologies/qore/issues/4303">issue 4303</a>)
     - fixed a race condition in @ref Qore::Process::Process::wait() "Process::wait()"
-      (<a href="https://github.com/qorelanguage/qore/issues/4272">issue 4272</a>)
+      (<a href="https://github.com/qoretechnologies/qore/issues/4272">issue 4272</a>)
 
     @section process_v1_0_2 process v1.0.2
     - updated builtin boost to 1.71
@@ -199,7 +176,7 @@
     @section process_v1_0_1 process v1.0.1
     - fixed bugs handling retrieving process status for already-terminated processes; addressed exception handling
       issues
-      (<a href="https://github.com/qorelanguage/qore/issues/4272">issue 4272</a>)
+      (<a href="https://github.com/qoretechnologies/qore/issues/4272">issue 4272</a>)
 
     @section process_v1_0_0 process v1.0.0
     - added:
@@ -208,14 +185,14 @@
     - added support for output stream options and the \a encoding option in
       @ref Qore::Process::Process::constructor() "Process::constructor()"; string read methods also make an effort
       to return valid multi-byte characters now as of this release
-      (<a href="https://github.com/qorelanguage/qore/issues/4080">issue 4080</a>)
+      (<a href="https://github.com/qoretechnologies/qore/issues/4080">issue 4080</a>)
     - @ref Qore::Process::Process::wait() "Process::wait()" will no longer throw an exception if the process has
       already terminated
 
     @section process_v0_0_2 process v0.0.2
     - fixed error handling @ref Qore::Process::Process::readStdout() "Process::readStdout()" and
       @ref Qore::Process::Process::readStderr() "Process::readStderr()" with negative arguments
-      (<a href="https://github.com/qorelanguage/qore/issues/2333">issue 2333</a>)
+      (<a href="https://github.com/qoretechnologies/qore/issues/2333">issue 2333</a>)
 
     @section process_v0_0_1 process v0.0.1
     - initial release
