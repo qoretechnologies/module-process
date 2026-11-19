@@ -340,7 +340,7 @@ hashdecl Qore::Process::ResourceUsageInfo {
 
     The simplest usage of Process is:
 
-    @code
+    @code{.py}
 %new-style
 %requires process
 
@@ -420,7 +420,7 @@ p.wait();
 
     Option example:
 
-    @code
+    @code{.py}
 %new-style
 %requires process
 
@@ -645,7 +645,7 @@ bool Process::running() {
 //! Wait for the child process to exit.
 /**
     @par Example:
-    @code
+    @code{.py}
 Process p("sleep", 3);
 p.wait(); # a blocking/wait call
 printf("Sleep finished with code: %d\n", p.exitCode());
@@ -664,7 +664,7 @@ bool Process::wait() {
 //! Wait for the child process to exit.
 /**
     @par Example:
-    @code
+    @code{.py}
 Process p("sleep", 3);
 while (!p.wait(1)) {
     printf("I'm doing something here...\n");
