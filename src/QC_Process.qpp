@@ -1112,7 +1112,9 @@ static hash<MemorySummaryInfo> Process::getMemorySummaryInfo(int pid) [flags=NAM
 /**
     @param pid the PID of the process
 
-    @return @ref Qore::True "True" if the process is running, @ref Qore::False "False" if not
+    @return @ref Qore::True "True" if the process is running, @ref Qore::False "False" if not; a process of another
+    user, which the calling process may not signal, is running too; a process that has ended but was not reaped (a
+    zombie) is not
 
     @throw PROCESS-CHECKPID-UNSUPPORTED-ERROR this exception is thrown if there is no implementation for this method
     on the current platform
@@ -1150,7 +1152,8 @@ static nothing Process::terminate(int pid) [flags=NAMED_ARGS] {
 
 //! wait until a given PID terminates
 /**
-    @param pid PID of the process to wait for
+    @param pid PID of the process to wait for; a process of another user, which the calling process may not signal,
+    is waited for too
 
     @throw PROCESS-WAITFORTERMINATION-UNSUPPORTED-ERROR this exception is thrown if there is no implementation for
     this method on the current platform
