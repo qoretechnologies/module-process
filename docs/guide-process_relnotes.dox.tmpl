@@ -7,6 +7,10 @@
     @section process_v2_2 process v2.2
     - Boost.Process v2 closes inherited descriptors automatically. Remove the obsolete <tt>close_fds</tt> option.
     - <tt>Process::getDescriptorCount()</tt> reports the number of open file descriptors for a process.
+    - Liveness checks take a process of another user, which the caller may not signal, for a running one (as
+      @ref Qore::Process::Process::checkPid() "checkPid()", @ref Qore::Process::Process::waitForTermination()
+      "waitForTermination()" and a process attached by its PID do); previously they took it for an ended one
+      (<a href="https://github.com/qoretechnologies/qore/issues/7182">issue 7182</a>)
     - On macOS and the BSDs, the end of a child is watched with a kernel event of the process instead of the
       \c SIGCHLD signal, so @ref Qore::Process::Process::wait() "wait()",
       @ref Qore::Process::Process::running() "running()" and @ref Qore::Process::Process::terminate() "terminate()"

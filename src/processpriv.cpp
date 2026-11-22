@@ -402,6 +402,14 @@ private:
     }
 };
 
+//! Returns true if a process with the PID exists (qoretechnologies/qore#7182)
+/** kill(pid, 0) fails with ESRCH only when there is no such process: it fails with EPERM for a process of another
+    user that the caller may not signal, which exists; a zombie exists too (see hasExited())
+*/
+static bool pid_exists(int pid) {
+    return !kill(pid, 0) || errno != ESRCH;
+}
+
 ProcessPriv::ProcessPriv(pid_t pid, ExceptionSink* xsink) :
         m_asio_ctx(),
         m_in_pipe(m_asio_ctx),
@@ -420,8 +428,8 @@ ProcessPriv::ProcessPriv(pid_t pid, ExceptionSink* xsink) :
             throw std::runtime_error("Process PID must be a positive integer");
         }
 #ifdef __APPLE__
-        // check if process is valid and throw an exception is not
-        if (kill(pid, 0)) {
+        // check if process is valid and throw an exception is not; a process of another user exists too
+        if (!pid_exists(pid)) {
             throw std::runtime_error("Process with PID " + std::to_string(pid) + " does not exist");
         }
 #endif
@@ -2595,7 +2603,8 @@ bool ProcessPriv::checkPid(int pid, ExceptionSink* xsink) {
             "cannot check invalid PID: PID must be positive (got %d)", pid);
         return false;
     }
-    if (kill(pid, 0)) {
+    // a process of another user, which kill() may not signal (EPERM), runs too
+    if (!pid_exists(pid)) {
         return false;
     }
 #if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__)) || defined(__FreeBSD__) \
@@ -2674,7 +2683,8 @@ void ProcessPriv::waitForTermination(int pid, ExceptionSink* xsink) {
         if (qore_check_cancel(xsink, "Process::waitForTermination")) {
             return;
         }
-        if (kill(pid, 0)) {
+        // a process of another user, which kill() may not signal (EPERM), has not terminated
+        if (!pid_exists(pid)) {
             break;
         }
 #if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__)) || defined(__FreeBSD__) \
@@ -3453,8 +3463,9 @@ QoreStringNode* ProcessPriv::getCommandLine(int pid, ExceptionSink* xsink) {
             return nullptr;
         }
 
-        // Check if the process still exists before retrying
-        if (kill(pid, 0) != 0) {
+        // Check if the process still exists before retrying; a process of another user does
+        // (qoretechnologies/qore#7182)
+        if (!pid_exists(pid)) {
             xsink->raiseException("PROCESS-GETCOMMANDLINE-ERROR",
                 "cannot get command line for PID %d: process no longer exists", pid);
             return nullptr;
