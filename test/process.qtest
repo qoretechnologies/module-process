@@ -935,8 +935,9 @@ public class Main inherits QUnit::Test {
         }
 
         # Use Python's os.fork() to reliably create a zombie process
-        # The parent forks a child that exits immediately, waits until it has exited without reaping it (WNOWAIT), so
-        # that it is a zombie, prints its PID, and then sleeps without reaping it
+        # The parent forks a child that exits immediately, waits until it has exited without reaping it, so that it is
+        # a zombie, prints its PID, and then sleeps without reaping it; the wait uses waitid(WNOWAIT) where Python has
+        # it, and otherwise (macOS, the BSDs) a kqueue exit event, which is reported once the child has ended
         string script = tmp_location() + DirSep + "zombie_creator.py";
         {
             File f();
@@ -947,7 +948,17 @@ public class Main inherits QUnit::Test {
                 "pid = os.fork()\n"
                 "if pid == 0:\n"
                 "    os._exit(0)\n"
-                "os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)\n"
+                "if hasattr(os, 'waitid'):\n"
+                "    os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)\n"
+                "else:\n"
+                "    import select\n"
+                "    kq = select.kqueue()\n"
+                "    ev = select.kevent(pid, filter=select.KQ_FILTER_PROC, flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,\n"
+                "        fflags=select.KQ_NOTE_EXIT)\n"
+                "    try:\n"
+                "        kq.control([ev], 1, None)\n"
+                "    except ProcessLookupError:\n"
+                "        pass\n"
                 "print(pid, flush=True)\n"
                 "time.sleep(300)\n"
             );
@@ -2397,14 +2408,17 @@ sub run(OutputStream stream) {
         assertEq(Process::getStartTime(p.id()), child.start_time);
 
         # a name with a space and a parenthesis, which /proc/<pid>/stat does not quote (on macOS the name is a
-        # separate field, and a copied system binary does not run)
+        # separate field)
         if (PlatformOS == "Linux") {
             string odd_dir = tmp_location() + sprintf("/procinfo-%d", getpid());
             mkdir(odd_dir, 0700, True);
             on_exit system(sprintf("rm -rf '%s'", odd_dir));
             string odd = odd_dir + "/a b)c";
-            system(sprintf("cp /bin/sleep '%s'", odd));
-            Process q(odd, (5,));
+            # a copy of qore, which works under any name (busybox's sleep would not run as "a b)c")
+            *string qore_bin = Process::searchPath("qore");
+            assertTrue(exists qore_bin, "qore is on the PATH");
+            system(sprintf("cp '%s' '%s'", qore_bin, odd));
+            Process q(odd, ("-ne", "sleep(5);"));
             on_exit q.terminate();
             string expected = "a b)c";
             # the kernel records the executable's name, possibly shortened
