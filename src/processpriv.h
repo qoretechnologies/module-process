@@ -203,6 +203,9 @@ public:
     //! Get command line for a specific PID (static)
     DLLLOCAL static QoreStringNode* getCommandLine(int pid, ExceptionSink* xsink);
 
+    //! returns the start time of a process in clock ticks since boot (Linux) or microseconds (macOS)
+    DLLLOCAL static int64 getStartTime(int pid, ExceptionSink* xsink);
+
     //! Get the path to the executable of a specific PID (static)
     DLLLOCAL static QoreStringNode* getExecutablePath(int pid, ExceptionSink* xsink);
 

@@ -151,6 +151,7 @@ public class Main inherits QUnit::Test {
         addTestCase("Pipeline test", \pipelineTest());
         addTestCase("Resource limits test", \resourceLimitsTest());
         addTestCase("getCommandLine test", \getCommandLineTest());
+        addTestCase("getStartTime test", \getStartTimeTest());
         addTestCase("repeated run() test", \repeatedRunTest());
         addTestCase("sandbox test", \sandboxTest());
         addTestCase("getExecutablePath test", \getExecutablePathTest());
@@ -2366,6 +2367,37 @@ sub run(OutputStream stream) {
         Program p(PO_NEW_STYLE | PO_NO_PROCESS_CONTROL);
         assertThrows("PARSE-EXCEPTION", \p.parse(), ("%requires process\nProcess::releaseFreeMemory();",
             "release-free-memory-test"));
+    }
+
+    getStartTimeTest() {
+        if (!HAVE_PROCESS_GETSTARTTIME) {
+            assertThrows("PROCESS-GETSTARTTIME-UNSUPPORTED-ERROR", \Process::getStartTime(), getpid());
+            return;
+        }
+        int mine = Process::getStartTime(getpid());
+        assertGt(0, mine);
+        assertEq(mine, Process::getStartTime(pid: getpid()), "stable, also with a named argument");
+
+        # a child started later has a later start time, and keeps it while it runs
+        usleep(50ms);
+        Process p(getTestValue("testSleep"), (5,), {"path": (m_prefix,)});
+        on_exit p.terminate();
+        int child = Process::getStartTime(p.id());
+        assertGt(mine, child, "a later process starts later");
+        usleep(50ms);
+        assertEq(child, Process::getStartTime(p.id()));
+
+        if (PlatformOS == "Linux") {
+            # the value is field 22 of /proc/<pid>/stat
+            string stat = ReadOnlyFile::readTextFile(sprintf("/proc/%d/stat", getpid()));
+            list<string> f = stat.substr(stat.rfind(")") + 2).split(" ");
+            assertEq(f[19].toInt(), mine);
+        }
+
+        # negative cases
+        assertThrows("PROCESS-GETSTARTTIME-ERROR", \Process::getStartTime(), 0);
+        assertThrows("PROCESS-GETSTARTTIME-ERROR", \Process::getStartTime(), -1);
+        assertThrows("PROCESS-GETSTARTTIME-ERROR", \Process::getStartTime(), 999999999);
     }
 
     getCommandLineTest() {
