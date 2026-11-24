@@ -2393,8 +2393,8 @@ sub run(OutputStream stream) {
         on_exit p.terminate();
         hash<ProcessInfo> child = Process::getInfo(p.id());
         assertEq(getpid(), child.ppid);
+        # the start time stays the same while a script's interpreter starts; its name does not, so it is not compared
         assertEq(Process::getStartTime(p.id()), child.start_time);
-        assertEq(child.name, Process::getName(p.id()));
 
         # a name with a space and a parenthesis, which /proc/<pid>/stat does not quote (on macOS the name is a
         # separate field, and a copied system binary does not run)
