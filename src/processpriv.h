@@ -206,6 +206,15 @@ public:
     //! returns the start time of a process in clock ticks since boot (Linux) or microseconds (macOS)
     DLLLOCAL static int64 getStartTime(int pid, ExceptionSink* xsink);
 
+    //! returns the parent PID of a process
+    DLLLOCAL static int64 getParentPid(int pid, ExceptionSink* xsink);
+
+    //! returns the name of a process as the kernel records it
+    DLLLOCAL static QoreStringNode* getName(int pid, ExceptionSink* xsink);
+
+    //! returns a ProcessInfo hash for a process
+    DLLLOCAL static QoreHashNode* getInfo(int pid, ExceptionSink* xsink);
+
     //! Get the path to the executable of a specific PID (static)
     DLLLOCAL static QoreStringNode* getExecutablePath(int pid, ExceptionSink* xsink);
 

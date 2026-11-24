@@ -27,6 +27,7 @@
 static QoreNamespace ProcessNS("Qore::Process");
 
 DLLLOCAL const TypedHashDecl* hashdeclMemorySummaryInfo;
+DLLLOCAL const TypedHashDecl* hashdeclProcessInfo;
 DLLLOCAL const TypedHashDecl* hashdeclProcessResult;
 DLLLOCAL const TypedHashDecl* hashdeclResourceUsageInfo;
 DLLLOCAL const TypedHashDecl* hashdeclSystemMemoryInfo;
@@ -38,6 +39,7 @@ DLLLOCAL int process_register_fork_handlers();
 DLLLOCAL void process_unregister_fork_handlers();
 
 DLLLOCAL TypedHashDecl* init_hashdecl_MemorySummaryInfo(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_ProcessInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_ProcessResult(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_ResourceUsageInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_SystemMemoryInfo(QoreNamespace& ns);
@@ -50,6 +52,7 @@ static void process_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink
     }
 
     hashdeclMemorySummaryInfo = init_hashdecl_MemorySummaryInfo(ProcessNS);
+    hashdeclProcessInfo = init_hashdecl_ProcessInfo(ProcessNS);
     hashdeclProcessResult = init_hashdecl_ProcessResult(ProcessNS);
     hashdeclResourceUsageInfo = init_hashdecl_ResourceUsageInfo(ProcessNS);
     hashdeclSystemMemoryInfo = init_hashdecl_SystemMemoryInfo(ProcessNS);

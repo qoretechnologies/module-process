@@ -10,6 +10,11 @@
     - @ref Qore::Process::Process::getStartTime() "Process::getStartTime()" returns a value that identifies when a
       process started (Linux and macOS), to tell a reused PID apart; unlike <tt>ps -o lstart</tt> on Linux, it does
       not move when the system clock is adjusted.
+    - @ref Qore::Process::Process::getInfo() "Process::getInfo()" returns a @ref Qore::Process::ProcessInfo "ProcessInfo"
+      hash (parent, group, user, name, state and start time) for a process or the current one, and
+      @ref Qore::Process::Process::getParentPid() "Process::getParentPid()" and
+      @ref Qore::Process::Process::getName() "Process::getName()" return single fields, without starting another
+      process (Linux and macOS).
     - Liveness checks take a process of another user, which the caller may not signal, for a running one (as
       @ref Qore::Process::Process::checkPid() "checkPid()", @ref Qore::Process::Process::waitForTermination()
       "waitForTermination()" and a process attached by its PID do); previously they took it for an ended one

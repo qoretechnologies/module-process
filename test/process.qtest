@@ -152,6 +152,7 @@ public class Main inherits QUnit::Test {
         addTestCase("Resource limits test", \resourceLimitsTest());
         addTestCase("getCommandLine test", \getCommandLineTest());
         addTestCase("getStartTime test", \getStartTimeTest());
+        addTestCase("getInfo test", \getInfoTest());
         addTestCase("repeated run() test", \repeatedRunTest());
         addTestCase("sandbox test", \sandboxTest());
         addTestCase("getExecutablePath test", \getExecutablePathTest());
@@ -934,8 +935,9 @@ public class Main inherits QUnit::Test {
         }
 
         # Use Python's os.fork() to reliably create a zombie process
-        # The parent forks a child that exits immediately, waits until it has exited without reaping it (WNOWAIT), so
-        # that it is a zombie, prints its PID, and then sleeps without reaping it
+        # The parent forks a child that exits immediately, waits until it has exited without reaping it, so that it is
+        # a zombie, prints its PID, and then sleeps without reaping it; the wait uses waitid(WNOWAIT) where Python has
+        # it, and otherwise (macOS, the BSDs) a kqueue exit event, which is reported once the child has ended
         string script = tmp_location() + DirSep + "zombie_creator.py";
         {
             File f();
@@ -946,7 +948,17 @@ public class Main inherits QUnit::Test {
                 "pid = os.fork()\n"
                 "if pid == 0:\n"
                 "    os._exit(0)\n"
-                "os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)\n"
+                "if hasattr(os, 'waitid'):\n"
+                "    os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)\n"
+                "else:\n"
+                "    import select\n"
+                "    kq = select.kqueue()\n"
+                "    ev = select.kevent(pid, filter=select.KQ_FILTER_PROC, flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,\n"
+                "        fflags=select.KQ_NOTE_EXIT)\n"
+                "    try:\n"
+                "        kq.control([ev], 1, None)\n"
+                "    except ProcessLookupError:\n"
+                "        pass\n"
                 "print(pid, flush=True)\n"
                 "time.sleep(300)\n"
             );
@@ -2367,6 +2379,60 @@ sub run(OutputStream stream) {
         Program p(PO_NEW_STYLE | PO_NO_PROCESS_CONTROL);
         assertThrows("PARSE-EXCEPTION", \p.parse(), ("%requires process\nProcess::releaseFreeMemory();",
             "release-free-memory-test"));
+    }
+
+    getInfoTest() {
+        if (!HAVE_PROCESS_GETINFO) {
+            assertThrows("PROCESS-GETINFO-UNSUPPORTED-ERROR", \Process::getInfo(), getpid());
+            assertThrows("PROCESS-GETINFO-UNSUPPORTED-ERROR", \Process::getParentPid(), getpid());
+            assertThrows("PROCESS-GETINFO-UNSUPPORTED-ERROR", \Process::getName(), getpid());
+            return;
+        }
+        hash<ProcessInfo> me = Process::getInfo();
+        assertEq(getpid(), me.pid);
+        assertEq(getppid(), me.ppid);
+        assertEq(getuid(), me.uid);
+        assertEq(Process::getStartTime(getpid()), me.start_time);
+        assertTrue(inlist(me.state, ("R", "S", "D")), "running or sleeping: " + me.state);
+        assertEq(me, Process::getInfo(pid: getpid()), "the same with a named argument");
+        assertEq(getppid(), Process::getParentPid(getpid()));
+        assertEq(me.name, Process::getName(getpid()));
+        assertTrue(me.name =~ /qore/, me.name);
+
+        # a child: its parent is this process
+        Process p(getTestValue("testSleep"), (5,), {"path": (m_prefix,)});
+        on_exit p.terminate();
+        hash<ProcessInfo> child = Process::getInfo(p.id());
+        assertEq(getpid(), child.ppid);
+        # the start time stays the same while a script's interpreter starts; its name does not, so it is not compared
+        assertEq(Process::getStartTime(p.id()), child.start_time);
+
+        # a name with a space and a parenthesis, which /proc/<pid>/stat does not quote (on macOS the name is a
+        # separate field)
+        if (PlatformOS == "Linux") {
+            string odd_dir = tmp_location() + sprintf("/procinfo-%d", getpid());
+            mkdir(odd_dir, 0700, True);
+            on_exit system(sprintf("rm -rf '%s'", odd_dir));
+            string odd = odd_dir + "/a b)c";
+            # a copy of qore, which works under any name (busybox's sleep would not run as "a b)c")
+            *string qore_bin = Process::searchPath("qore");
+            assertTrue(exists qore_bin, "qore is on the PATH");
+            system(sprintf("cp '%s' '%s'", qore_bin, odd));
+            Process q(odd, ("-ne", "sleep(5);"));
+            on_exit q.terminate();
+            string expected = "a b)c";
+            # the kernel records the executable's name, possibly shortened
+            assertEq(expected, Process::getName(q.id()).substr(0, expected.length()));
+            assertEq(getpid(), Process::getParentPid(q.id()), "the fields after the name are still found");
+
+        }
+
+        # negative cases
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getInfo(), 0);
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getInfo(), -1);
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getInfo(), 999999999);
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getParentPid(), 999999999);
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getName(), 999999999);
     }
 
     getStartTimeTest() {
