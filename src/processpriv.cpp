@@ -146,6 +146,7 @@ void process_priv_unregister_fork_handlers() {
 }
 
 DLLLOCAL extern const TypedHashDecl* hashdeclMemorySummaryInfo;
+DLLLOCAL extern const TypedHashDecl* hashdeclProcessInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclProcessResult;
 DLLLOCAL extern const TypedHashDecl* hashdeclResourceUsageInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclSystemMemoryInfo;
@@ -3401,22 +3402,36 @@ bool ProcessPriv::terminateTree(ExceptionSink* xsink) {
     return true;
 }
 
-int64 ProcessPriv::getStartTime(int pid, ExceptionSink* xsink) {
+namespace {
+//! process information read from the kernel (see ProcessPriv::readProcInfo())
+struct ProcInfoRec {
+    int ppid = 0;
+    int pgid = 0;
+    int uid = -1;
+    std::string name;
+    char state = '?';
+    int64 start = 0;
+};
+}
+
+//! reads a process's information; on error raises "<err>-ERROR" or "<err>-UNSUPPORTED-ERROR" and returns false
+static bool read_proc_info(int pid, ProcInfoRec& rec, const char* err, ExceptionSink* xsink) {
+    QoreStringMaker err_name("%s-ERROR", err);
     if (pid <= 0) {
-        xsink->raiseException("PROCESS-GETSTARTTIME-ERROR", "PID must be positive (got %d)", pid);
-        return 0;
+        xsink->raiseException(err_name.c_str(), "PID must be positive (got %d)", pid);
+        return false;
     }
 #if defined(__linux__)
     QoreStringMaker path("/proc/%d/stat", pid);
     if (check_sandbox_read(path.c_str(), xsink)) {
-        return 0;
+        return false;
     }
     FILE* f = fopen(path.c_str(), "r");
     if (!f) {
-        xsink->raiseErrnoException("PROCESS-GETSTARTTIME-ERROR", errno, "cannot read %s", path.c_str());
-        return 0;
+        xsink->raiseErrnoException(err_name.c_str(), errno, "cannot read %s", path.c_str());
+        return false;
     }
-    // the command name can contain any characters and is at most 64 bytes on current kernels; the line is read whole
+    // the command name can contain any characters; the line is read whole
     std::string buf;
     char chunk[1024];
     size_t n;
@@ -3424,53 +3439,115 @@ int64 ProcessPriv::getStartTime(int pid, ExceptionSink* xsink) {
         buf.append(chunk, n);
     }
     int read_error = ferror(f) ? errno : 0;
+    struct stat st;
+    // the owner of /proc/<pid> is the process's real user
+    int stat_rc = fstat(fileno(f), &st);
     fclose(f);
     if (read_error) {
-        xsink->raiseErrnoException("PROCESS-GETSTARTTIME-ERROR", read_error, "cannot read %s", path.c_str());
-        return 0;
+        xsink->raiseErrnoException(err_name.c_str(), read_error, "cannot read %s", path.c_str());
+        return false;
     }
-    // "pid (comm) state ..." with comm possibly containing ')': fields count from after the last ')'
-    size_t paren = buf.rfind(')');
-    if (paren == std::string::npos) {
-        xsink->raiseException("PROCESS-GETSTARTTIME-ERROR", "unexpected format of %s", path.c_str());
-        return 0;
+    // "pid (comm) state ppid pgrp ...": comm may contain ')' and spaces, so it ends at the last ')'
+    size_t open = buf.find('(');
+    size_t close = buf.rfind(')');
+    if (open == std::string::npos || close == std::string::npos || close < open) {
+        xsink->raiseException(err_name.c_str(), "unexpected format of %s", path.c_str());
+        return false;
     }
-    // after ") " come field 3 (state) and the rest separated by single spaces; starttime is field 22
-    const char* p = buf.c_str() + paren + 1;
-    for (int field = 3; field <= 22; ++field) {
-        if (*p != ' ') {
-            p = nullptr;
+    rec.name = buf.substr(open + 1, close - open - 1);
+    // fields 3 (state) to 22 (starttime) follow, separated by single spaces
+    std::vector<std::string> fields;
+    size_t pos = close + 1;
+    while (fields.size() < 20 && pos < buf.size() && buf[pos] == ' ') {
+        size_t next = buf.find(' ', pos + 1);
+        fields.push_back(buf.substr(pos + 1, next == std::string::npos ? std::string::npos : next - pos - 1));
+        if (next == std::string::npos) {
             break;
         }
-        ++p;
-        if (field < 22) {
-            p = strchr(p, ' ');
-            if (!p) {
-                break;
-            }
-        }
+        pos = next;
+    }
+    if (fields.size() < 20 || fields[0].empty()) {
+        xsink->raiseException(err_name.c_str(), "unexpected format of %s", path.c_str());
+        return false;
     }
     char* end = nullptr;
     errno = 0;
-    unsigned long long v = p ? strtoull(p, &end, 10) : 0;
-    if (!p || end == p || errno) {
-        xsink->raiseException("PROCESS-GETSTARTTIME-ERROR", "unexpected format of %s", path.c_str());
-        return 0;
+    unsigned long long start = strtoull(fields[19].c_str(), &end, 10);
+    if (end == fields[19].c_str() || *end || errno) {
+        xsink->raiseException(err_name.c_str(), "unexpected format of %s", path.c_str());
+        return false;
     }
-    return (int64)v;
+    rec.state = fields[0][0];
+    rec.ppid = atoi(fields[1].c_str());
+    rec.pgid = atoi(fields[2].c_str());
+    rec.uid = stat_rc ? -1 : (int)st.st_uid;
+    rec.start = (int64)start;
+    return true;
 #elif defined(__APPLE__) && defined(__MACH__)
     struct proc_bsdinfo info;
+    errno = 0;
     int rc = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info));
     if (rc != (int)sizeof(info)) {
-        xsink->raiseErrnoException("PROCESS-GETSTARTTIME-ERROR", errno ? errno : ESRCH,
-            "cannot get the start time of PID %d", pid);
-        return 0;
+        xsink->raiseErrnoException(err_name.c_str(), errno ? errno : ESRCH, "cannot get information on PID %d", pid);
+        return false;
     }
-    return (int64)info.pbi_start_tvsec * 1000000 + (int64)info.pbi_start_tvusec;
+    rec.ppid = (int)info.pbi_ppid;
+    rec.pgid = (int)info.pbi_pgid;
+    rec.uid = (int)info.pbi_uid;
+    // pbi_name holds the longer name when the kernel recorded one
+    rec.name = info.pbi_name[0] ? std::string(info.pbi_name, strnlen(info.pbi_name, sizeof(info.pbi_name)))
+        : std::string(info.pbi_comm, strnlen(info.pbi_comm, sizeof(info.pbi_comm)));
+    switch (info.pbi_status) {
+        case SIDL: rec.state = 'I'; break;
+        case SRUN: rec.state = 'R'; break;
+        case SSLEEP: rec.state = 'S'; break;
+        case SSTOP: rec.state = 'T'; break;
+        case SZOMB: rec.state = 'Z'; break;
+        default: rec.state = '?'; break;
+    }
+    rec.start = (int64)info.pbi_start_tvsec * 1000000 + (int64)info.pbi_start_tvusec;
+    return true;
 #else
-    xsink->raiseException("PROCESS-GETSTARTTIME-UNSUPPORTED-ERROR", "getStartTime() is not supported on this platform");
-    return 0;
+    QoreStringMaker unsupported("%s-UNSUPPORTED-ERROR", err);
+    xsink->raiseException(unsupported.c_str(), "this call is not supported on this platform");
+    return false;
 #endif
+}
+
+int64 ProcessPriv::getStartTime(int pid, ExceptionSink* xsink) {
+    ProcInfoRec rec;
+    return read_proc_info(pid, rec, "PROCESS-GETSTARTTIME", xsink) ? rec.start : 0;
+}
+
+int64 ProcessPriv::getParentPid(int pid, ExceptionSink* xsink) {
+    ProcInfoRec rec;
+    return read_proc_info(pid, rec, "PROCESS-GETINFO", xsink) ? rec.ppid : 0;
+}
+
+QoreStringNode* ProcessPriv::getName(int pid, ExceptionSink* xsink) {
+    ProcInfoRec rec;
+    if (!read_proc_info(pid, rec, "PROCESS-GETINFO", xsink)) {
+        return nullptr;
+    }
+    return new QoreStringNode(rec.name.c_str());
+}
+
+QoreHashNode* ProcessPriv::getInfo(int pid, ExceptionSink* xsink) {
+    ProcInfoRec rec;
+    if (!read_proc_info(pid, rec, "PROCESS-GETINFO", xsink)) {
+        return nullptr;
+    }
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclProcessInfo, xsink), xsink);
+    rv->setKeyValue("pid", pid, xsink);
+    rv->setKeyValue("ppid", rec.ppid, xsink);
+    rv->setKeyValue("pgid", rec.pgid, xsink);
+    if (rec.uid >= 0) {
+        rv->setKeyValue("uid", rec.uid, xsink);
+    }
+    rv->setKeyValue("name", new QoreStringNode(rec.name.c_str()), xsink);
+    rv->setKeyValue("state", new QoreStringNode(rec.state), xsink);
+    rv->setKeyValue("start_time", rec.start, xsink);
+    return rv.release();
 }
 
 QoreStringNode* ProcessPriv::getCommandLine(int pid, ExceptionSink* xsink) {

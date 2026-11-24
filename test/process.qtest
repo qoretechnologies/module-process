@@ -152,6 +152,7 @@ public class Main inherits QUnit::Test {
         addTestCase("Resource limits test", \resourceLimitsTest());
         addTestCase("getCommandLine test", \getCommandLineTest());
         addTestCase("getStartTime test", \getStartTimeTest());
+        addTestCase("getInfo test", \getInfoTest());
         addTestCase("repeated run() test", \repeatedRunTest());
         addTestCase("sandbox test", \sandboxTest());
         addTestCase("getExecutablePath test", \getExecutablePathTest());
@@ -2367,6 +2368,57 @@ sub run(OutputStream stream) {
         Program p(PO_NEW_STYLE | PO_NO_PROCESS_CONTROL);
         assertThrows("PARSE-EXCEPTION", \p.parse(), ("%requires process\nProcess::releaseFreeMemory();",
             "release-free-memory-test"));
+    }
+
+    getInfoTest() {
+        if (!HAVE_PROCESS_GETINFO) {
+            assertThrows("PROCESS-GETINFO-UNSUPPORTED-ERROR", \Process::getInfo(), getpid());
+            assertThrows("PROCESS-GETINFO-UNSUPPORTED-ERROR", \Process::getParentPid(), getpid());
+            assertThrows("PROCESS-GETINFO-UNSUPPORTED-ERROR", \Process::getName(), getpid());
+            return;
+        }
+        hash<ProcessInfo> me = Process::getInfo();
+        assertEq(getpid(), me.pid);
+        assertEq(getppid(), me.ppid);
+        assertEq(getuid(), me.uid);
+        assertEq(Process::getStartTime(getpid()), me.start_time);
+        assertTrue(inlist(me.state, ("R", "S", "D")), "running or sleeping: " + me.state);
+        assertEq(me, Process::getInfo(pid: getpid()), "the same with a named argument");
+        assertEq(getppid(), Process::getParentPid(getpid()));
+        assertEq(me.name, Process::getName(getpid()));
+        assertTrue(me.name =~ /qore/, me.name);
+
+        # a child: its parent is this process
+        Process p(getTestValue("testSleep"), (5,), {"path": (m_prefix,)});
+        on_exit p.terminate();
+        hash<ProcessInfo> child = Process::getInfo(p.id());
+        assertEq(getpid(), child.ppid);
+        assertEq(Process::getStartTime(p.id()), child.start_time);
+        assertEq(child.name, Process::getName(p.id()));
+
+        # a name with a space and a parenthesis, which /proc/<pid>/stat does not quote (on macOS the name is a
+        # separate field, and a copied system binary does not run)
+        if (PlatformOS == "Linux") {
+            string odd_dir = tmp_location() + sprintf("/procinfo-%d", getpid());
+            mkdir(odd_dir, 0700, True);
+            on_exit system(sprintf("rm -rf '%s'", odd_dir));
+            string odd = odd_dir + "/a b)c";
+            system(sprintf("cp /bin/sleep '%s'", odd));
+            Process q(odd, (5,));
+            on_exit q.terminate();
+            string expected = "a b)c";
+            # the kernel records the executable's name, possibly shortened
+            assertEq(expected, Process::getName(q.id()).substr(0, expected.length()));
+            assertEq(getpid(), Process::getParentPid(q.id()), "the fields after the name are still found");
+
+        }
+
+        # negative cases
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getInfo(), 0);
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getInfo(), -1);
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getInfo(), 999999999);
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getParentPid(), 999999999);
+        assertThrows("PROCESS-GETINFO-ERROR", \Process::getName(), 999999999);
     }
 
     getStartTimeTest() {

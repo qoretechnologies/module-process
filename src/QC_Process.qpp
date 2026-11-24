@@ -114,6 +114,7 @@
 #endif
 
 DLLLOCAL extern const TypedHashDecl* hashdeclMemorySummaryInfo;
+DLLLOCAL extern const TypedHashDecl* hashdeclProcessInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclProcessResult;
 DLLLOCAL extern const TypedHashDecl* hashdeclResourceUsageInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclSystemMemoryInfo;
@@ -211,6 +212,11 @@ const HAVE_PROCESS_GETDESCRIPTORCOUNT = bool(HAVE_PROCESS_GETDESCRIPTORCOUNT);
 //! Defines if @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" is available
 const HAVE_PROCESS_GETCOMMANDLINE = bool(HAVE_PROCESS_GETCOMMANDLINE);
 
+//! Defines if the static @ref Qore::Process::Process::getInfo() "Process::getInfo()", @ref Qore::Process::Process::getParentPid() "Process::getParentPid()" and @ref Qore::Process::Process::getName() "Process::getName()" methods are available on the current platform
+/** @since process 2.2
+*/
+const HAVE_PROCESS_GETINFO = bool(HAVE_PROCESS_GETSTARTTIME);
+
 //! Defines if the static @ref Qore::Process::Process::getStartTime() "Process::getStartTime()" method is available on the current platform
 /** @since process 2.2
 */
@@ -236,6 +242,26 @@ const HAVE_PROCESS_GETPIDSFORPORT = bool(HAVE_PROCESS_GETPIDSFORPORT);
 //! Defines if @ref Qore::Process::Process::getPidsForUnixSocket() "Process::getPidsForUnixSocket()" is available
 const HAVE_PROCESS_GETPIDSFORUNIXSOCKET = bool(HAVE_PROCESS_GETPIDSFORUNIXSOCKET);
 ///@}
+
+//! Information on a process as provided by @ref Qore::Process::Process::getInfo() "Process::getInfo()"
+/** @since process 2.2
+*/
+hashdecl Qore::Process::ProcessInfo {
+    //! the process ID
+    int pid;
+    //! the parent process ID
+    int ppid;
+    //! the process group ID
+    int pgid;
+    //! the real user ID of the process, if known
+    *int uid;
+    //! the name of the process as the kernel records it (on Linux at most 15 bytes, on macOS up to 32)
+    string name;
+    //! the state: \c R running, \c S sleeping, \c T stopped, \c Z zombie, \c I being created (macOS); on Linux also \c D (uninterruptible wait) and the other letters of <tt>/proc/<pid>/stat</tt>; \c ? if unknown
+    string state;
+    //! the start time, as @ref Qore::Process::Process::getStartTime() "Process::getStartTime()" returns it: compare it only with values for the same PID on the same host since the same boot
+    int start_time;
+}
 
 //! A hash of summary memory information as provided by @ref Qore::Process::Process::getMemorySummaryInfo() "Process::getMemorySummaryInfo()"
 /** @note On Linux, \c priv reports the sum of "proportional set sizes" for all virtual memory segments
@@ -1605,6 +1631,98 @@ bool same = Process::checkPid(pid) && Process::getStartTime(pid) == start;
 */
 static int Process::getStartTime(int pid) [flags=RET_VALUE_ONLY,NAMED_ARGS;dom=EXTERNAL_INFO] {
     return ProcessPriv::getStartTime(pid, xsink);
+}
+
+//! Returns information on a process: its parent, group, user, name, state and start time
+/** @par Example:
+    @code{.py}
+hash<ProcessInfo> info = Process::getInfo(pid);
+printf("%s (pid %d) was started by pid %d\n", info.name, info.pid, info.ppid);
+    @endcode
+
+    @param pid the PID of the process
+
+    @return a @ref ProcessInfo hash; reading it starts no other process
+
+    @throw PROCESS-GETINFO-ERROR the PID is not positive, or the process does not exist or cannot be inspected
+    @throw PROCESS-GETINFO-UNSUPPORTED-ERROR this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED the process cannot be inspected in the current sandbox
+
+    @note implemented on Linux (<tt>/proc</tt>) and macOS (<tt>proc_pidinfo()</tt>)
+
+    @see HAVE_PROCESS_GETINFO
+
+    @since process 2.2
+*/
+static hash<ProcessInfo> Process::getInfo(int pid) [flags=RET_VALUE_ONLY,NAMED_ARGS;dom=EXTERNAL_INFO] {
+    return ProcessPriv::getInfo(pid, xsink);
+}
+
+//! Returns information on the current process
+/** @par Example:
+    @code{.py}
+hash<ProcessInfo> me = Process::getInfo();
+    @endcode
+
+    @return a @ref ProcessInfo hash for the current process
+
+    @throw PROCESS-GETINFO-ERROR the process cannot be inspected
+    @throw PROCESS-GETINFO-UNSUPPORTED-ERROR this method is not available on the current platform
+
+    @see HAVE_PROCESS_GETINFO
+
+    @since process 2.2
+*/
+static hash<ProcessInfo> Process::getInfo() [flags=RET_VALUE_ONLY;dom=EXTERNAL_INFO] {
+    return ProcessPriv::getInfo(getpid(), xsink);
+}
+
+//! Returns the parent PID of a process
+/** @par Example:
+    @code{.py}
+int parent = Process::getParentPid(pid);
+    @endcode
+
+    @param pid the PID of the process
+
+    @return the PID of its parent (0 for a process without one)
+
+    @throw PROCESS-GETINFO-ERROR the PID is not positive, or the process does not exist or cannot be inspected
+    @throw PROCESS-GETINFO-UNSUPPORTED-ERROR this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED the process cannot be inspected in the current sandbox
+
+    @see
+    - @ref HAVE_PROCESS_GETINFO
+    - @ref Qore::Process::Process::getInfo() "Process::getInfo()"
+
+    @since process 2.2
+*/
+static int Process::getParentPid(int pid) [flags=RET_VALUE_ONLY,NAMED_ARGS;dom=EXTERNAL_INFO] {
+    return ProcessPriv::getParentPid(pid, xsink);
+}
+
+//! Returns the name of a process as the kernel records it
+/** @par Example:
+    @code{.py}
+bool codex = Process::getName(pid) == "codex";
+    @endcode
+
+    @param pid the PID of the process
+
+    @return the process name: on Linux the \c comm field (at most 15 bytes), on macOS the process name (up to 32 bytes)
+
+    @throw PROCESS-GETINFO-ERROR the PID is not positive, or the process does not exist or cannot be inspected
+    @throw PROCESS-GETINFO-UNSUPPORTED-ERROR this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED the process cannot be inspected in the current sandbox
+
+    @see
+    - @ref HAVE_PROCESS_GETINFO
+    - @ref Qore::Process::Process::getInfo() "Process::getInfo()"
+
+    @since process 2.2
+*/
+static string Process::getName(int pid) [flags=RET_VALUE_ONLY,NAMED_ARGS;dom=EXTERNAL_INFO] {
+    return ProcessPriv::getName(pid, xsink);
 }
 
 //! Returns the command line of a process as a string
