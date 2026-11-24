@@ -3391,6 +3391,78 @@ bool ProcessPriv::terminateTree(ExceptionSink* xsink) {
     return true;
 }
 
+int64 ProcessPriv::getStartTime(int pid, ExceptionSink* xsink) {
+    if (pid <= 0) {
+        xsink->raiseException("PROCESS-GETSTARTTIME-ERROR", "PID must be positive (got %d)", pid);
+        return 0;
+    }
+#if defined(__linux__)
+    QoreStringMaker path("/proc/%d/stat", pid);
+    if (check_sandbox_read(path.c_str(), xsink)) {
+        return 0;
+    }
+    FILE* f = fopen(path.c_str(), "r");
+    if (!f) {
+        xsink->raiseErrnoException("PROCESS-GETSTARTTIME-ERROR", errno, "cannot read %s", path.c_str());
+        return 0;
+    }
+    // the command name can contain any characters and is at most 64 bytes on current kernels; the line is read whole
+    std::string buf;
+    char chunk[1024];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof(chunk), f)) > 0) {
+        buf.append(chunk, n);
+    }
+    int read_error = ferror(f) ? errno : 0;
+    fclose(f);
+    if (read_error) {
+        xsink->raiseErrnoException("PROCESS-GETSTARTTIME-ERROR", read_error, "cannot read %s", path.c_str());
+        return 0;
+    }
+    // "pid (comm) state ..." with comm possibly containing ')': fields count from after the last ')'
+    size_t paren = buf.rfind(')');
+    if (paren == std::string::npos) {
+        xsink->raiseException("PROCESS-GETSTARTTIME-ERROR", "unexpected format of %s", path.c_str());
+        return 0;
+    }
+    // after ") " come field 3 (state) and the rest separated by single spaces; starttime is field 22
+    const char* p = buf.c_str() + paren + 1;
+    for (int field = 3; field <= 22; ++field) {
+        if (*p != ' ') {
+            p = nullptr;
+            break;
+        }
+        ++p;
+        if (field < 22) {
+            p = strchr(p, ' ');
+            if (!p) {
+                break;
+            }
+        }
+    }
+    char* end = nullptr;
+    errno = 0;
+    unsigned long long v = p ? strtoull(p, &end, 10) : 0;
+    if (!p || end == p || errno) {
+        xsink->raiseException("PROCESS-GETSTARTTIME-ERROR", "unexpected format of %s", path.c_str());
+        return 0;
+    }
+    return (int64)v;
+#elif defined(__APPLE__) && defined(__MACH__)
+    struct proc_bsdinfo info;
+    int rc = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info));
+    if (rc != (int)sizeof(info)) {
+        xsink->raiseErrnoException("PROCESS-GETSTARTTIME-ERROR", errno ? errno : ESRCH,
+            "cannot get the start time of PID %d", pid);
+        return 0;
+    }
+    return (int64)info.pbi_start_tvsec * 1000000 + (int64)info.pbi_start_tvusec;
+#else
+    xsink->raiseException("PROCESS-GETSTARTTIME-UNSUPPORTED-ERROR", "getStartTime() is not supported on this platform");
+    return 0;
+#endif
+}
+
 QoreStringNode* ProcessPriv::getCommandLine(int pid, ExceptionSink* xsink) {
     if (pid <= 0) {
         xsink->raiseException("PROCESS-GETCOMMANDLINE-ERROR", "PID must be positive (got %d)", pid);

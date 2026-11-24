@@ -74,6 +74,13 @@
 #define HAVE_PROCESS_GETCOMMANDLINE 0
 #endif
 
+// getStartTime: /proc on Linux, proc_pidinfo() on macOS
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+#define HAVE_PROCESS_GETSTARTTIME 1
+#else
+#define HAVE_PROCESS_GETSTARTTIME 0
+#endif
+
 // getExecutablePath: supported wherever Boost ext::exe works (the same platforms as ext::cmd)
 #define HAVE_PROCESS_GETEXECUTABLEPATH HAVE_PROCESS_GETCOMMANDLINE
 
@@ -203,6 +210,11 @@ const HAVE_PROCESS_GETDESCRIPTORCOUNT = bool(HAVE_PROCESS_GETDESCRIPTORCOUNT);
 
 //! Defines if @ref Qore::Process::Process::getCommandLine() "Process::getCommandLine()" is available
 const HAVE_PROCESS_GETCOMMANDLINE = bool(HAVE_PROCESS_GETCOMMANDLINE);
+
+//! Defines if the static @ref Qore::Process::Process::getStartTime() "Process::getStartTime()" method is available on the current platform
+/** @since process 2.2
+*/
+const HAVE_PROCESS_GETSTARTTIME = bool(HAVE_PROCESS_GETSTARTTIME);
 
 //! Defines if @ref Qore::Process::Process::getExecutablePath() "Process::getExecutablePath()" is available
 /** @since process 2.1
@@ -1560,6 +1572,36 @@ static hash<ProcessResult> Process::pipeline(softlist<softlist<softstring>> comm
     QoreHashNode* result = ProcessPriv::run(shellCmd->c_str(), nullptr, *opts, 0, xsink);
     shellCmd->deref();
     return result;
+}
+
+//! Returns a value that identifies when a process started, to tell a reused PID apart
+/** @par Example:
+    @code{.py}
+int start = Process::getStartTime(pid);
+# later: the same PID is the same process only if its start time is unchanged
+bool same = Process::checkPid(pid) && Process::getStartTime(pid) == start;
+    @endcode
+
+    @param pid the PID of the process
+
+    @return a value that stays the same for the whole life of the process and is different for a later process with
+    the same PID; compare it only with values for the same PID on the same host since the same boot: on Linux it is
+    the start time in clock ticks since boot (field 22 of <tt>/proc/<pid>/stat</tt>), on macOS the start time in
+    microseconds since the epoch
+
+    @throw PROCESS-GETSTARTTIME-ERROR the PID is not positive, or the process does not exist or cannot be inspected
+    @throw PROCESS-GETSTARTTIME-UNSUPPORTED-ERROR this method is not available on the current platform
+    @throw FILESYSTEM-ACCESS-DENIED the process cannot be inspected in the current sandbox
+
+    @note unlike a wall-clock start time derived from the boot time (as <tt>ps -o lstart</tt> shows it on Linux), the
+    value does not move when the system clock is adjusted
+
+    @see HAVE_PROCESS_GETSTARTTIME
+
+    @since process 2.2
+*/
+static int Process::getStartTime(int pid) [flags=RET_VALUE_ONLY,NAMED_ARGS;dom=EXTERNAL_INFO] {
+    return ProcessPriv::getStartTime(pid, xsink);
 }
 
 //! Returns the command line of a process as a string
